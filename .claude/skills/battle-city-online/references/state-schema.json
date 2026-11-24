@@ -1,0 +1,33 @@
+{
+  "_comment": "Ánh xạ trường của GET /state sang mô hình chuẩn hoá. Mỗi khoá nhận 1 đường dẫn (chuỗi) hoặc danh sách đường dẫn thử lần lượt. Đường dẫn dạng a.b.0.c; {me}/{enemy} được thay bằng 'top'/'bottom'. Để trống (null) = tự dò. Chạy probe_schema.py trên state thật rồi điền.",
+  "status": null,
+  "time_left": null,
+  "armor_left": null,
+  "my_tanks": null,
+  "enemy_tanks": null,
+  "all_tanks": null,
+  "my_base_hp": null,
+  "enemy_base_hp": null,
+  "my_score": null,
+  "enemy_score": null,
+  "events": null,
+  "items": null,
+  "map": null,
+  "my_side": null,
+  "tank_fields": {
+    "id": null, "x": null, "y": null, "pos": null, "dir": null, "lives": null,
+    "stars": null, "order": null, "shield": null, "alive": null, "side": null, "mine": null
+  },
+  "item_fields": {"kind": null, "x": null, "y": null, "pos": null},
+  "event_fields": {"type": null, "tank": null},
+
+  "legend": {".": "empty", "#": "brick", "@": "steel", "%": "tree", "~": "water", "-": "ice", " ": "empty"},
+  "unknown_char_as": "empty",
+  "tank_size": 2,
+  "base_pos": {"top": [20, 0], "bottom": [20, 40]},
+  "enemy_half": {"bottom_max_y": 19, "top_min_y": 21},
+  "game_seconds_total": 480,
+  "armor_game_seconds": 180,
+  "eagle_invulnerable_s": 5.0,
+  "time_unit": "game_seconds"
+}
