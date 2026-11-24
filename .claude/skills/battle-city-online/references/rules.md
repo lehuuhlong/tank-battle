@@ -126,6 +126,21 @@ Cách giải tự động:
 3. `adaptive` tự đổi 1 xe vây/săn thành `breaker` cho mỗi rào (tối đa 2); trong `plan.json` dùng vai `breaker`.
 Rào dùng 2/4 xe địch đứng một chỗ → bên công của địch còn 2 xe: giữ 1 xe `defend` là đủ chặn.
 
+## Bị đánh từ hai hông
+Địch muốn phá nhà thì phải đứng ở nửa sân ta, thẳng hàng với đại bàng ta, và bắn qua lớp tường (đánh hông = đứng cùng hàng với
+đại bàng rồi bắn ngang). Runner xử lý 5 lớp:
+1. **Cứu nhà (mọi chiến thuật, ưu tiên cao nhất):** mỗi nhịp tìm xe địch đang có đường đạn tới đại bàng ta (≤2 lớp gạch, đứng ở
+   nửa sân ta). Với mỗi xe như vậy, xe ta gần nhất (chi phí đường ≤25, xe đang ở xa thì cứ tiếp tục đánh) sẽ:
+   bắn nó ngay nếu thẳng hàng, hoặc tới ô bắn / **ô chắn trong làn đạn**, chọn chỗ rẻ hơn. Xe đứng chắn quay nòng về phía kẻ địch;
+   đạn trúng xe thay vì trúng đại bàng (mất 1 mạng xe, còn hơn mất 1 máu nhà).
+2. **Mỗi xe thủ một mục tiêu:** `defend`, `guard_left`, `guard_right` không cùng đuổi một xe địch → hai hông có hai người chặn.
+3. **Vai `guard_left` / `guard_right`:** chặn xe địch đến từ hông đó; không có địch thì đứng chốt trong làn hông, ngay ngoài tường
+   quanh đại bàng, nòng hướng ra ngoài.
+4. **`adaptive` tự tách hai hông:** thấy xe địch ở nửa sân ta đến từ **cả trái lẫn phải** → phase `two_flanks`: 1 xe giữ mỗi hông
+   (xe gần hông đó nhất), các xe còn lại **vẫn vây đại bàng địch** (địch dồn quân đánh hông thì nhà chúng mỏng — phản công).
+   Nhà ta ≤2 máu thì thêm 1 xe `defend`.
+5. Mẹo dặn trong prompt: ưu tiên nhặt **xẻng ⛏️** (tường quanh nhà thành thép 20 giây); **đừng tự bắn vỡ** tường hai bên đại bàng.
+
 ## Kẹt đường
 Lệnh `move` thất bại (`order_failed` / bị từ chối) → runner đọc **ô bị chặn** trong phản hồi (trường `cell`/`blocked`/`at` hoặc
 chuỗi "(x, y)"), phạt ô đó +40 trong 8 giây và tính lại đường từ vị trí hiện tại ở nhịp sau → xe tự đi vòng.
@@ -133,7 +148,8 @@ Bị từ chối 3 lần liền → **lùi 1-2 ô theo hướng ngược ô bị
 
 ## Chiến thuật
 - **scripted**: làm đúng chiến thuật người dùng viết — file `plan.json` gồm vai từng xe + luật đổi vai (xem SKILL.md mục 5). Sửa file giữa trận là có hiệu lực ở nhịp sau.
-- **adaptive**: giáp → `[collect, stage, hunt, defend]` (xe ⭐3 chuyển sang `siege`); hết giáp → `[siege×3, defend]`;
+- **adaptive**: bị đánh hai hông → `[siege×2, guard_left, guard_right]` (nhà ≤2 máu: `[siege, guard_left, guard_right, defend]`);
+  có hàng rào → thêm `breaker`; giáp → `[collect, stage, hunt, defend]` (xe ⭐3 chuyển sang `siege`); hết giáp → `[siege×3, defend]`;
   đại bàng địch ≤2 máu → tất cả `siege`; nhà ta ≤2 máu hoặc ≥2 xe địch sang sân ta → `[siege×2, defend×2]`;
   cuối trận (≤90s game) dẫn ≥1500 → `[defend×3, hunt]`; cuối trận đang thua → tất cả `siege`.
 - **siege** (`defenders=1`), **rush**, **hunter** (`pair=true` để 2 xe một mục tiêu), **fortress** (`hunters=1`, `fire_bricks=1`),

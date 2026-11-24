@@ -79,10 +79,12 @@ Vai dùng được:
 - `breaker`: phá hàng rào đạn (2 xe địch quay mặt vào nhau bắn chặn một hàng/cột): đánh xe rào từ phía nó không quay nòng. Không có rào thì như `hunt`.
 - `defend`: chặn địch gần nhà hoặc giữ chốt.
 - `guard_front:N`: chốt trước nhà N ô.
+- `guard_left`, `guard_right`: giữ hông trái / phải của đại bàng ta (chặn xe địch đến từ phía đó, không có thì chốt trong làn hông).
 - `collect`: nhặt vật phẩm.
 - `hold`: đứng yên.
 - Hậu tố `+collect`: ghé nhặt đồ gần đường rồi làm vai chính.
 
+Ngoài vai, runner luôn ưu tiên **cứu nhà**: xe địch nào có đường đạn tới đại bàng ta thì xe ta gần nhất bắn nó hoặc lao vào chắn làn đạn.
 Mọi vai đều tự bắn xe địch khi thẳng hàng. Khi còn giáp, các vai vây tự chuyển sang `stage`, trừ xe ⭐3.
 
 Điều kiện trong `when`:
@@ -106,6 +108,8 @@ Lặp: `bco.py watch CODE --seconds 25` → in 1 dòng → xử lý nếu cần 
 | Lệnh bị từ chối / `order_failed` | Phạt ô bị chặn 8 giây và tính đường vòng; 3 lần liền thì lùi 1-2 ô ngược hướng ô bị chặn | Nếu lặp lại nhiều: đọc lý do trong `log.jsonl`, sửa schema hoặc legend |
 | Địch dựng hàng rào đạn (2 xe quay mặt vào nhau bắn chặn một hàng) | Không đi xuyên làn rào (trừ khi có khiên); `adaptive` cử xe `breaker` đánh xe rào từ phía nó không quay nòng | Muốn phá nhanh: cho 2 xe vai `breaker` trong plan.json |
 | Xe bị hạ rồi hồi sinh, hoặc xe bị đưa về nhà sau khi bắn trúng đại bàng | Giao lại việc | — |
+| Xe địch có đường đạn tới đại bàng ta | Xe ta gần nhất bắn nó hoặc lao vào chắn làn (mọi chiến thuật) | — |
+| Địch đánh từ hai hông | Mỗi xe thủ nhận một kẻ địch khác nhau; `adaptive` đặt `guard_left` + `guard_right`, các xe còn lại vẫn công | Dùng `scripted`: cho 2 xe `guard_left`/`guard_right`; dặn ưu tiên nhặt xẻng ⛏️ |
 | Nhà ta bị bắn | Vai `defend` mở rộng vùng chặn trong 8 giây | `watch` báo "NHÀ TA MẤT MÁU": cân nhắc thêm vai `defend` hoặc `guard_front` |
 | `429` (gọi API quá nhiều) | Client tự chờ rồi gửi lại | Vẫn bị: tăng `--interval` |
 

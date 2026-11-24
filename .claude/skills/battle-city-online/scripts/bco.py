@@ -23,7 +23,7 @@ import time
 
 from bco_core import (SCHEMA_PATH, ApiError, Client, find_map_rows, find_rejections, load_schema,
                       normalize, detect_side, render)
-from bco_brain import ROLE_HELP, STRATEGIES, Commander, defense_posts, get_strategy, summary_line
+from bco_brain import ROLE_HELP, STRATEGIES, Commander, decide_all, defense_posts, get_strategy, summary_line
 
 DATA_DIR = os.environ.get("BCO_DATA_DIR", os.path.join(os.getcwd(), "bco-data"))
 
@@ -210,7 +210,7 @@ def cmd_analyze(a):
     print_game(g)
     for name in a.strategy or sorted(STRATEGIES):
         mem = {}
-        decisions = get_strategy(name, **params).decide(g, mem)
+        decisions = decide_all(get_strategy(name, **params), g, mem)
         print(f"\n== {name}{' (phase=' + mem['adaptive_phase'] + ')' if mem.get('adaptive_phase') else ''} ==")
         for tid, d in sorted(decisions.items(), key=lambda kv: str(kv[0])):
             steps = " ; ".join(f"{s['do']} {s.get('direction', '')} {s.get('cells', s.get('count', ''))}".strip() for s in d.steps)

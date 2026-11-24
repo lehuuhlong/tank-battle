@@ -5,7 +5,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 
-from bco_core import (DELTA, DIRS, OVERLAY_CHARS, ApiError, build_path, dijkstra, event_tank, event_type,
+from bco_core import (DELTA, DIRS, OVERLAY_CHARS, ApiError, direction_between, build_path, dijkstra, event_tank, event_type,
                       find_rejections, overlaps, path_to_steps, trace)
 
 STRATEGIES = {}
@@ -182,12 +182,15 @@ def penalties_for(game, tank, memory=None):
 
 
 def paths_from(game, tank, memory=None, max_cost=None):
-    key = ("paths", tank.id, tank.pos, tank.stars, id(game))
-    if memory is not None and memory.get("_path_cache_key") == key:
-        return memory["_path_cache"]
+    key = (tank.id, tank.pos, tank.stars, max_cost)
+    cache = memory.get("_paths") if memory is not None else None
+    if cache is not None and cache.get("game") is game and key in cache:
+        return cache[key]
     res = dijkstra(game.grid, tank.pos, game.tank_size, star3(tank), penalties_for(game, tank, memory), max_cost)
     if memory is not None:
-        memory["_path_cache_key"], memory["_path_cache"] = key, res
+        if cache is None or cache.get("game") is not game:
+            cache = memory["_paths"] = {"game": game}
+        cache[key] = res
     return res
 
 
@@ -480,6 +483,158 @@ def break_fence(game, tank, memory, taken_posts=None):
     return dec
 
 
+# ---------------------------------------------------------------- base defence vs flank attacks
+def side_of(game, pos):
+    """Hướng của một vị trí so với đại bàng ta: 'left' / 'right' (hai hông) hoặc 'front' (chính diện)."""
+    dx, dy = pos[0] - game.my_base[0], pos[1] - game.my_base[1]
+    if abs(dx) > abs(dy):
+        return "left" if dx < 0 else "right"
+    return "front"
+
+
+def eagle_threats(game, max_bricks=2):
+    """Enemy tanks in our half with a straight bullet line to OUR eagle (≤ max_bricks brick layers;
+    a tank of ours standing in the lane already blocks it). Most urgent first."""
+    s, out = game.tank_size, []
+    for e in game.alive_tanks(False):
+        if not game.in_my_half(e.y):
+            continue  # shots from its own half do no damage
+        d = direction_between(e.pos, game.my_base, s)
+        if not d:
+            continue
+        ents = [("my_base", game.my_base, None)] + [("mine", t.pos, t) for t in game.alive_tanks(True)]
+        ents += [("other", o.pos, o) for o in game.alive_tanks(False) if o is not e]
+        hit = trace(game.grid, e.pos, d, s, ents, star3(e), 60)
+        if hit["kind"] == "my_base" and hit["bricks"] <= max_bricks:
+            out.append({"enemy": e, "dir": d, "bricks": hit["bricks"], "dist": hit["dist"], "side": side_of(game, e.pos)})
+    return sorted(out, key=lambda t: (t["bricks"], t["dist"]))
+
+
+def block_anchors(game, th):
+    """Free anchors inside the bullet lane between the attacker and our eagle (body-block spots),
+    closest to the eagle first."""
+    s, e, d = game.tank_size, th["enemy"], th["dir"]
+    bx, by = game.my_base
+    out = []
+    if d in ("left", "right"):
+        xs = range(e.x + s, bx - s + 1) if d == "right" else range(bx + s, e.x - s + 1)
+        for x in xs:
+            for y in range(e.y - s + 1, e.y + s):
+                out.append((x, y))
+    else:
+        ys = range(e.y + s, by - s + 1) if d == "down" else range(by + s, e.y - s + 1)
+        for y in ys:
+            for x in range(e.x - s + 1, e.x + s):
+                out.append((x, y))
+    free = []
+    for a in out:
+        ec = game.grid.enter_cost(a[0], a[1], s)
+        if ec and not ec[1] and not overlaps(a[0], a[1], bx, by, s):
+            free.append(a)
+    return sorted(free, key=lambda a: abs(a[0] - bx) + abs(a[1] - by))
+
+
+def guard_eagle(game, tank, memory, th):
+    """Cứu nhà vs one attacker: shoot it now if we can; else go to the cheaper of a firing spot or a
+    body-block spot in its lane (a tank in the lane takes the bullet instead of the eagle).
+    Returns (cost, Decision) or None."""
+    e = th["enemy"]
+    d = direction_between(tank.pos, e.pos, game.tank_size)
+    if d:
+        hit = shot_at(game, tank, d)
+        if hit["kind"] == "enemy" and hit["obj"] is e and hit["bricks"] <= 1 and can_fire(game, tank, memory):
+            return 0, Decision(job=f"save_fire:{e.id}", steps=[fire_step(d, hit["bricks"] + 2)], urgent=True,
+                               note=f"cứu nhà: bắn xe địch {e.id}")
+    dist, prev = paths_from(game, tank, memory)
+    best = None
+    spots, _ = firing_spots(game, tank, e.pos, "enemy", memory, max_bricks=0, min_dist=2)
+    if spots:
+        c, spot, fd, _ = spots[0]
+        best = (c, spot, fire_step(fd, 2), "bắn")
+    face = {"left": "right", "right": "left", "up": "down", "down": "up"}[th["dir"]]  # look at the attacker
+    for a in block_anchors(game, th):
+        if a in dist and (best is None or dist[a] - 3 < best[0]):
+            best = (dist[a] - 3, a, {"do": "turn", "direction": face}, "chắn")
+            break
+    if not best:
+        return None
+    cost, spot, then, how = best
+    if tank.pos == spot:
+        return cost, Decision(job=f"save_{how}:{e.id}@{spot}", steps=[then], urgent=then["do"] == "fire",
+                              note=f"cứu nhà: {how} xe địch {e.id}")
+    dec = go_to(game, tank, spot, prev, f"save_{how}:{e.id}@{spot}", max_steps=3, then=then)
+    if dec:
+        dec.note = f"cứu nhà: {how} xe địch {e.id}"
+        return cost, dec
+    return None
+
+
+def eagle_emergency(game, memory, max_cost=25):
+    """Highest priority, every strategy: for each enemy with a shot at our eagle, the closest of our
+    tanks (path cost ≤ max_cost, so far-away attackers keep attacking) shoots it or blocks its lane."""
+    threats = eagle_threats(game)
+    memory["eagle_threats"] = [(th["enemy"].id, th["side"]) for th in threats]
+    used, out = set(), {}
+    for th in threats:
+        best = None
+        for t in game.alive_tanks(True):
+            if t.id in used:
+                continue
+            r = guard_eagle(game, t, memory, th)
+            if r and r[0] <= max_cost and (best is None or r[0] < best[0]):
+                best = (r[0], t, r[1])
+        if best:
+            used.add(best[1].id)
+            out[best[1].id] = best[2]
+    return out
+
+
+def flank_post(game, side):
+    """Chốt hông: anchor in our eagle's row lane, just outside its wall ring on `side`."""
+    s, (bx, by) = game.tank_size, game.my_base
+    xs = range(bx - s - 1, bx - s - 9, -1) if side == "left" else range(bx + s + 1, bx + s + 9)
+    for x in xs:
+        for y in sorted(range(by - s + 1, by + s), key=lambda y: abs(y - by)):
+            if 0 <= y <= game.grid.H - s and 0 <= x <= game.grid.W - s:
+                ec = game.grid.enter_cost(x, y, s)
+                if ec and not ec[1]:
+                    return (x, y)
+    return None
+
+
+def guard_side(game, tank, memory, side, claimed=None):
+    """guard_left / guard_right: intercept attackers on that side of our eagle, otherwise hold the
+    flank post facing outward."""
+    claimed = claimed if claimed is not None else set()
+    near = [e for e in game.alive_tanks(False) if e.id not in claimed and game.in_my_half(e.y)
+            and side_of(game, e.pos) == side and abs(e.x - game.my_base[0]) + abs(e.y - game.my_base[1]) <= 18]
+    if near:
+        target = min(near, key=lambda e: abs(e.x - game.my_base[0]) + abs(e.y - game.my_base[1]))
+        claimed.add(target.id)
+        dec = hunt(game, tank, memory, target)
+        if dec:
+            dec.job, dec.note = f"flank_{side}:" + dec.job, f"giữ hông {side}: chặn xe địch {target.id}"
+            return dec
+    post = flank_post(game, side)
+    if not post:
+        return defend(game, tank, memory, claimed=claimed)
+    if tank.pos == post:
+        if tank.dir != side:
+            return Decision(job=f"flank_{side}:face", steps=[{"do": "turn", "direction": side}])
+        return hold(f"flank_{side}:hold")
+    _, prev = paths_from(game, tank, memory)
+    return go_to(game, tank, post, prev, f"flank_{side}:go{post}", then={"do": "turn", "direction": side})
+
+
+def decide_all(strategy, game, memory):
+    """Strategy decisions + the eagle emergency override (applies to every strategy)."""
+    decisions = strategy.decide(game, memory)
+    for tid, dec in eagle_emergency(game, memory).items():
+        dec.job = "cứu nhà|" + dec.job
+        decisions[tid] = dec
+    return decisions
+
+
 def defense_posts(game, memory, n=4):
     """Pick n anchors near our eagle with long open firing lanes into our half (cached per game)."""
     key = ("posts", game.my_side, game.grid.W, game.grid.H)
@@ -515,15 +670,19 @@ def defense_posts(game, memory, n=4):
     return posts
 
 
-def defend(game, tank, memory, post_index=0, intercept_radius=14, post=None):
+def defend(game, tank, memory, post_index=0, intercept_radius=14, post=None, claimed=None):
     # our eagle was just hit (server also reports the shooter): widen the intercept net for 8s
     if game.now - memory.get("my_base_hit", -1e9) < 8:
         intercept_radius = 24
     # intercept enemies close to our eagle first
+    claimed = claimed if claimed is not None else set()
     threats = [e for e in game.alive_tanks(False)
                if game.in_my_half(e.y) and abs(e.x - game.my_base[0]) + abs(e.y - game.my_base[1]) <= intercept_radius]
+    # each defender takes a different attacker (two flanks → two defenders, one per side)
+    threats = [e for e in threats if e.id not in claimed] or threats
     if threats:
         target = min(threats, key=lambda e: abs(e.x - game.my_base[0]) + abs(e.y - game.my_base[1]))
+        claimed.add(target.id)
         dec = hunt(game, tank, memory, target)
         if dec:
             dec.job = "intercept:" + dec.job
@@ -640,6 +799,8 @@ ROLE_HELP = {
     "breaker": "phá hàng rào đạn: săn xe rào gần nhất từ phía nó không quay nòng (không có rào thì như hunt)",
     "defend": "chặn xe địch gần nhà, không có thì giữ chốt tốt nhất quanh nhà",
     "guard_front:N": "đứng chốt trước căn cứ ta N ô (mặc định 3), nòng hướng về phía địch, địch lao về thì ra chặn",
+    "guard_left": "giữ hông trái đại bàng ta: chặn xe địch đến từ bên trái, không có thì đứng chốt trong làn hông trái, nòng hướng ra ngoài",
+    "guard_right": "giữ hông phải đại bàng ta (như guard_left, bên phải)",
     "collect": "nhặt vật phẩm (⭐ trước)",
     "hold": "đứng yên (vẫn bắn cơ hội)",
     "<vai>+collect": "ghé nhặt vật phẩm gần đường (chi phí ≤ 15) rồi làm <vai>",
@@ -729,15 +890,17 @@ def run_role(role, game, tank, memory, ctx, free_fire=True, fire_bricks=0, item_
     elif name == "breaker":
         dec = break_fence(game, tank, memory, ctx.setdefault("posts", set())) or hunt(game, tank, memory)
     elif name == "defend":
-        dec = defend(game, tank, memory, post_index=ctx["defend_idx"])
+        dec = defend(game, tank, memory, post_index=ctx["defend_idx"], claimed=ctx.setdefault("claimed_enemies", set()))
         ctx["defend_idx"] += 1
+    elif name in ("guard_left", "guard_right"):
+        dec = guard_side(game, tank, memory, name.split("_")[1], ctx.setdefault("claimed_enemies", set()))
     elif name == "guard_front":
         dec = guard_front(game, tank, memory, n=int(arg or 3))
     elif name == "collect":
         dec = collect(game, tank, memory, max_cost=item_max_cost, claimed=ctx["claimed"])
     elif name == "hold":
         dec = hold()
-    if dec is None and name not in ("hunt", "hold", "guard_front", "defend"):
+    if dec is None and name not in ("hunt", "hold", "guard_front", "defend", "guard_left", "guard_right"):
         dec = hunt(game, tank, memory)
     if dec is not None:
         dec.note = dec.note or role
@@ -773,6 +936,14 @@ class Adaptive(Strategy):
             return "protect_lead", ["defend"] * (n - 1) + ["hunt"]
         if endgame and lead < 0:
             return "all_in", ["siege"] * n
+        sides = {side_of(game, e.pos) for e in game.alive_tanks(False)
+                 if game.in_my_half(e.y) and abs(e.x - game.my_base[0]) + abs(e.y - game.my_base[1]) <= 22}
+        if {"left", "right"} <= sides:
+            # attacked from both flanks: one guard per flank, the rest keep attacking (their base is thinner now)
+            if n >= 4:
+                return "two_flanks", (["siege", "guard_left", "guard_right", "defend"] if my_hp is not None and my_hp <= 2
+                                      else ["siege", "siege", "guard_left", "guard_right"])
+            return "two_flanks", ["guard_left", "guard_right", "siege"][:n] if n >= 2 else ["defend"]
         if (my_hp is not None and my_hp <= 2) or invaders >= 2:
             return "defensive", ["siege", "siege", "defend", "defend"][:n] if n >= 3 else ["defend", "siege"][:n]
         return "siege", (["siege", "siege", "siege", "defend"] if n >= 4 else ["siege"] * (n - 1) + ["defend"])[:n]
@@ -789,10 +960,21 @@ class Adaptive(Strategy):
             phase += "+rào"
         memory["adaptive_phase"] = phase
         tanks = sorted(game.alive_tanks(True), key=lambda t: str(t.id))
+        # flank guards go to the tank closest to each flank; the other roles keep tank order
+        assign, free = {}, list(tanks)
+        for r in [r for r in roles if r.startswith("guard_") and r != "guard_front"]:
+            post = flank_post(game, r.split("_")[1]) or game.my_base
+            if free:
+                t = min(free, key=lambda t: abs(t.x - post[0]) + abs(t.y - post[1]))
+                assign[t.id] = r
+                free.remove(t)
+        rest = [r for r in roles if not (r.startswith("guard_") and r != "guard_front")] or ["hunt"]
+        for i, t in enumerate(free):
+            assign[t.id] = rest[i % len(rest)]
         ctx = new_ctx()
         out = {}
-        for i, tank in enumerate(tanks):
-            role = roles[i % len(roles)]
+        for tank in tanks:
+            role = assign[tank.id]
             if phase == "armor" and star3(tank) and role != "defend":
                 role = "siege"  # 3 stars break the armor steel: the eagle is open to this tank
             if role == "collect":
@@ -873,7 +1055,7 @@ class Scripted(Strategy):
         except json.JSONDecodeError as e:
             print(f"! plan.json lỗi JSON, giữ kế hoạch cũ: {e}", file=sys.stderr)
             return
-        known = {r.split(" ")[0].split("/")[0].split(":")[0] for r in ROLE_HELP} | {"siege_left", "siege_right"}
+        known = {r.split(" ")[0].split("/")[0].split(":")[0] for r in ROLE_HELP} | {"siege_left", "siege_right", "guard_left", "guard_right"}
         for scope in [plan.get("roles", {})] + [r.get("roles", {}) for r in plan.get("rules", [])]:
             for tid, role in scope.items():
                 base = role.removesuffix("+collect").split(":")[0]
@@ -1121,7 +1303,7 @@ class Commander:
         when inline_stop=False.
         """
         self.observe(game)
-        decisions = self.strategy.decide(game, self.memory)
+        decisions = decide_all(self.strategy, game, self.memory)
         steps, stopped, report = [], [], {}
         for tid, dec in decisions.items():
             tank, tm = game.tank(tid), self.tanks.get(tid)
