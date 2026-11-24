@@ -76,6 +76,7 @@ Vai dùng được:
 - `rush`: lao vào bắn, không xếp lượt.
 - `stage`: chiếm sẵn vị trí bắn nhưng chưa bắn.
 - `hunt`: săn xe địch.
+- `breaker`: phá hàng rào đạn (2 xe địch quay mặt vào nhau bắn chặn một hàng/cột): đánh xe rào từ phía nó không quay nòng. Không có rào thì như `hunt`.
 - `defend`: chặn địch gần nhà hoặc giữ chốt.
 - `guard_front:N`: chốt trước nhà N ô.
 - `collect`: nhặt vật phẩm.
@@ -102,7 +103,8 @@ Lặp: `bco.py watch CODE --seconds 25` → in 1 dòng → xử lý nếu cần 
 ## 7. Xử lý sự kiện (runner tự làm; bạn theo dõi)
 | Sự kiện | Runner tự làm | Bạn làm |
 |---|---|---|
-| Lệnh bị từ chối / `order_failed` | Gửi lại riêng xe đó; sau 3 lần liền thì cho xe nhích 1 ô để thoát kẹt | Nếu lặp lại nhiều: đọc lý do trong `log.jsonl`, sửa schema hoặc legend |
+| Lệnh bị từ chối / `order_failed` | Phạt ô bị chặn 8 giây và tính đường vòng; 3 lần liền thì lùi 1-2 ô ngược hướng ô bị chặn | Nếu lặp lại nhiều: đọc lý do trong `log.jsonl`, sửa schema hoặc legend |
+| Địch dựng hàng rào đạn (2 xe quay mặt vào nhau bắn chặn một hàng) | Không đi xuyên làn rào (trừ khi có khiên); `adaptive` cử xe `breaker` đánh xe rào từ phía nó không quay nòng | Muốn phá nhanh: cho 2 xe vai `breaker` trong plan.json |
 | Xe bị hạ rồi hồi sinh, hoặc xe bị đưa về nhà sau khi bắn trúng đại bàng | Giao lại việc | — |
 | Nhà ta bị bắn | Vai `defend` mở rộng vùng chặn trong 8 giây | `watch` báo "NHÀ TA MẤT MÁU": cân nhắc thêm vai `defend` hoặc `guard_front` |
 | `429` (gọi API quá nhiều) | Client tự chờ rồi gửi lại | Vẫn bị: tăng `--interval` |

@@ -114,6 +114,23 @@ nửa sân nhà, nhặt đồ gần đường, nhà còn 2 máu thì rút hết 
 Đang giáp, vai vây (`siege*`, `rush`) tự chuyển sang `stage`, trừ xe ⭐3.
 Tìm đường né các làn bắn hiện tại của xe địch (`danger_penalty` trong schema, 0 để tắt).
 
+## Hàng rào đạn (2 xe địch quay mặt vào nhau bắn liên tục)
+Đạn đồng đội không gây sát thương, nên địch có thể đặt 2 xe ở hai đầu một hàng (hoặc cột), quay nòng vào nhau và bắn liên tục.
+Xe nào đi vào làn giữa chúng sẽ bị hạ. Runner tự **nhận ra rào** mỗi nhịp: hai xe địch thẳng hàng, cách nhau ≥4 ô, giữa không có
+gạch/thép, quay mặt vào nhau. Nếu state không có hướng xe (chỉ có bản đồ) thì nhận theo dấu hiệu cả hai đứng yên thẳng hàng ~2 giây.
+Cách giải tự động:
+1. **Không đi xuyên rào:** mỗi ô trong làn rào bị cộng +60 chi phí khi tìm đường → xe đi vòng ra ngoài hai đầu rào; chỉ vượt khi
+   không còn đường nào khác. Xe đang có **khiên** (vừa hồi sinh, nhặt ⛑️) thì được đi xuyên.
+2. **Phá rào từ điểm mù:** xe rào đang quay nòng dọc theo làn của nó → xe ta đến **cùng cột** với nó (rào theo hàng) và bắn;
+   nó phải mất ≥1 nhịp quay nòng mới bắn trả được. Mọi lần săn một xe rào đều tự chọn hướng này.
+3. `adaptive` tự đổi 1 xe vây/săn thành `breaker` cho mỗi rào (tối đa 2); trong `plan.json` dùng vai `breaker`.
+Rào dùng 2/4 xe địch đứng một chỗ → bên công của địch còn 2 xe: giữ 1 xe `defend` là đủ chặn.
+
+## Kẹt đường
+Lệnh `move` thất bại (`order_failed` / bị từ chối) → runner đọc **ô bị chặn** trong phản hồi (trường `cell`/`blocked`/`at` hoặc
+chuỗi "(x, y)"), phạt ô đó +40 trong 8 giây và tính lại đường từ vị trí hiện tại ở nhịp sau → xe tự đi vòng.
+Bị từ chối 3 lần liền → **lùi 1-2 ô theo hướng ngược ô bị chặn**, tránh làn bắn của địch, rồi tính lại đường.
+
 ## Chiến thuật
 - **scripted**: làm đúng chiến thuật người dùng viết — file `plan.json` gồm vai từng xe + luật đổi vai (xem SKILL.md mục 5). Sửa file giữa trận là có hiệu lực ở nhịp sau.
 - **adaptive**: giáp → `[collect, stage, hunt, defend]` (xe ⭐3 chuyển sang `siege`); hết giáp → `[siege×3, defend]`;
@@ -126,7 +143,8 @@ Tìm đường né các làn bắn hiện tại của xe địch (`danger_penalt
 - Địch dồn quân vây nhà ta → `fortress` hoặc `balanced` với `roles=siege,defend,defend,hunt`.
 - Địch thủ chặt nhà, ta mất nhiều xe khi tiếp cận → `hunter` một lúc để kiếm điểm, rồi quay lại `siege`.
 - Nhiều ⭐ xuất hiện trong lúc giáp → `collector` (⭐3 bắn thủng thép mở thêm vị trí bắn).
-- Bị từ chối lệnh liên tục → xem `rejected` trong log; runner tự lùi về lệnh đầu, sau 3 lần thì `unstick`.
+- Bị từ chối lệnh liên tục → xem `rejected` trong log (lý do + ô bị chặn); runner tự phạt ô đó, đi vòng, 3 lần thì lùi ra.
+- Gặp hàng rào đạn → runner tự xử lý (mục Hàng rào đạn); muốn dồn lực phá nhanh: `plan.json` cho 2 xe vai `breaker`.
 
 ## Thêm chiến thuật mới
 Thêm một lớp vào `scripts/bco_brain.py`:

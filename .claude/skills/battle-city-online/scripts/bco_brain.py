@@ -69,13 +69,110 @@ def danger_lanes(game, rng=22):
     return out
 
 
-def penalties_for(game, tank):
-    """Avoid anchors overlapping other tanks (allies move: soft cost; enemies bigger) and enemy firing lanes."""
+def blocked_cell_from(obj):
+    """Find the blocked cell in an order_failed event / rejection reason: a dict with cell/blocked/at
+    [x, y] or {x, y}, or text like "(12, 7)". None if absent."""
+    if isinstance(obj, dict):
+        for k in ("blocked_cell", "blocked", "cell", "at", "position", "pos", "where"):
+            v = obj.get(k)
+            if isinstance(v, (list, tuple)) and len(v) >= 2 and all(isinstance(c, int) for c in v[:2]):
+                return (v[0], v[1])
+            if isinstance(v, dict) and isinstance(v.get("x"), int) and isinstance(v.get("y"), int):
+                return (v["x"], v["y"])
+        for v in obj.values():
+            if isinstance(v, (dict, str)):
+                r = blocked_cell_from(v)
+                if r:
+                    return r
+    elif isinstance(obj, str):
+        import re
+        m = re.search(r"\(\s*(\d+)\s*,\s*(\d+)\s*\)", obj)
+        if m:
+            return (int(m.group(1)), int(m.group(2)))
+    return None
+
+
+def mark_blocked(memory, cell, now, ttl=8.0):
+    if cell:
+        memory.setdefault("blocked", {})[tuple(cell)] = now + ttl
+
+
+def detect_fences(game, memory):
+    """Hàng rào đạn: two enemy tanks on the same row (or column), >=4 cells apart, nothing solid
+    between, facing each other (or, if directions are unknown, both standing still for ~2s).
+    Returns [{"axis": "row"|"col", "posts": (e1, e2), "lane": set(anchors)}]."""
+    s, out = game.tank_size, []
+    vel = memory.get("enemy_vel") or {}
+    seen = memory.setdefault("fence_seen", {})
+    alive = game.alive_tanks(False)
+    current = set()
+    for i, a in enumerate(alive):
+        for b in alive[i + 1:]:
+            if abs(a.y - b.y) < s and abs(a.x - b.x) >= 4:
+                axis, (lo, hi), d_lo = "row", sorted((a, b), key=lambda t: t.x), "right"
+            elif abs(a.x - b.x) < s and abs(a.y - b.y) >= 4:
+                axis, (lo, hi), d_lo = "col", sorted((a, b), key=lambda t: t.y), "down"
+            else:
+                continue
+            d_hi = {"right": "left", "down": "up"}[d_lo]
+            hit = trace(game.grid, lo.pos, d_lo, s, [("post", hi.pos, hi)], False, 60)
+            if hit["kind"] != "post" or hit["bricks"]:
+                continue
+            key = (axis, lo.x // 2, lo.y // 2, hi.x // 2, hi.y // 2)
+            if lo.dir and hi.dir:
+                facing = lo.dir == d_lo and hi.dir == d_hi
+            else:  # map-only state: no directions → both parked in line for a while
+                still = all(abs(vel.get(t.id, (0, 0))[0]) + abs(vel.get(t.id, (0, 0))[1]) < 0.3 for t in (lo, hi))
+                seen[key] = seen.get(key, 0) + 1 if still else 0
+                facing = seen[key] >= 4
+            if not facing:
+                continue
+            current.add(key)
+            lane = set()
+            if axis == "row":
+                for x in range(lo.x - s + 1, hi.x + s):
+                    for y in range(min(lo.y, hi.y) - s + 1, max(lo.y, hi.y) + s):
+                        lane.add((x, y))
+            else:
+                for y in range(lo.y - s + 1, hi.y + s):
+                    for x in range(min(lo.x, hi.x) - s + 1, max(lo.x, hi.x) + s):
+                        lane.add((x, y))
+            out.append({"axis": axis, "posts": (lo, hi), "lane": lane})
+    for k in list(seen):
+        if k not in current and seen[k] == 0:
+            seen.pop(k)
+    return out
+
+
+def fence_post(memory, enemy):
+    """'row'/'col' if `enemy` is a post of a detected fence, else None."""
+    for f in memory.get("fences") or []:
+        if any(p.id == enemy.id for p in f["posts"]):
+            return f["axis"]
+    return None
+
+
+def penalties_for(game, tank, memory=None):
+    """Path costs: avoid other tanks (allies soft, enemies more), enemy firing lanes, cells that just
+    blocked a move (order_failed), and fence lanes (unless we are shielded)."""
     s, pen = game.tank_size, {}
+    memory = memory if memory is not None else {}
     danger_w = game.schema.get("danger_penalty", 3)
     if danger_w:
         for a, n in danger_lanes(game).items():
             pen[a] = danger_w * n
+    if not tank.shield:
+        for f in memory.get("fences") or []:
+            for a in f["lane"]:
+                pen[a] = pen.get(a, 0) + 60
+    for (cx, cy), until in list((memory.get("blocked") or {}).items()):
+        if until < game.now:
+            memory["blocked"].pop((cx, cy), None)
+            continue
+        for dx in range(s):
+            for dy in range(s):
+                a = (cx - dx, cy - dy)
+                pen[a] = pen.get(a, 0) + 40
     for other, cost in [(t, 6) for t in game.alive_tanks(True) if t.id != tank.id] + [(t, 15) for t in game.alive_tanks(False)]:
         for dx in range(-s + 1, s):
             for dy in range(-s + 1, s):
@@ -88,7 +185,7 @@ def paths_from(game, tank, memory=None, max_cost=None):
     key = ("paths", tank.id, tank.pos, tank.stars, id(game))
     if memory is not None and memory.get("_path_cache_key") == key:
         return memory["_path_cache"]
-    res = dijkstra(game.grid, tank.pos, game.tank_size, star3(tank), penalties_for(game, tank), max_cost)
+    res = dijkstra(game.grid, tank.pos, game.tank_size, star3(tank), penalties_for(game, tank, memory), max_cost)
     if memory is not None:
         memory["_path_cache_key"], memory["_path_cache"] = key, res
     return res
@@ -246,7 +343,7 @@ def spot_side(spot, d, eagle):
 
 
 def firing_spots(game, tank, target_anchor, target_kind, memory, max_bricks=1, need_enemy_half=False,
-                 min_dist=1, exclude=(), max_candidates=400, prefer=None, assume_star3=False):
+                 min_dist=1, exclude=(), max_candidates=400, prefer=None, assume_star3=False, only_axis=None):
     """Anchors from which `tank` could hit `target_kind` at `target_anchor`, sorted by travel cost."""
     s = game.tank_size
     dist, prev = paths_from(game, tank, memory)
@@ -264,6 +361,8 @@ def firing_spots(game, tank, target_anchor, target_kind, memory, max_bricks=1, n
         else:
             d = "left" if tx < x else "right"
         # trace from the candidate, pretending the shooter stands there
+        if only_axis == "col" and not abs(x - tx) < s or only_axis == "row" and not abs(y - ty) < s:
+            continue
         if prefer and prefer != spot_side((x, y), d, (tx, ty)) and not (prefer == "side" and d in ("left", "right")):
             continue
         ghost = type(tank)(id=tank.id, x=x, y=y, stars=tank.stars)
@@ -354,7 +453,9 @@ def hunt(game, tank, memory, target=None):
     if not enemies:
         return None
     target = target or min(enemies, key=lambda e: abs(e.x - tank.x) + abs(e.y - tank.y))
-    spots, prev = firing_spots(game, tank, target.pos, "enemy", memory, max_bricks=1, min_dist=2)
+    axis = fence_post(memory, target)  # fence post faces along its row → come at it along its column
+    only = {"row": "col", "col": "row"}.get(axis)
+    spots, prev = firing_spots(game, tank, target.pos, "enemy", memory, max_bricks=1, min_dist=2, only_axis=only)
     if not spots:
         return None
     _, spot, d, bricks = spots[0]
@@ -363,6 +464,20 @@ def hunt(game, tank, memory, target=None):
     # target moves: label by target + coarse area so we re-plan when it relocates
     return go_to(game, tank, spot, prev, f"hunt:{target.id}@{target.x // 6},{target.y // 6}",
                  max_steps=3, then=fire_step(d, bricks + 1))
+
+
+def break_fence(game, tank, memory, taken_posts=None):
+    """Phá rào: hunt the nearest post of a fence (from its blind side). No fence → None."""
+    taken_posts = taken_posts if taken_posts is not None else set()
+    posts = [p for f in memory.get("fences") or [] for p in f["posts"] if p.id not in taken_posts]
+    if not posts:
+        return None
+    target = min(posts, key=lambda e: abs(e.x - tank.x) + abs(e.y - tank.y))
+    taken_posts.add(target.id)
+    dec = hunt(game, tank, memory, target)
+    if dec:
+        dec.job, dec.note = "breaker:" + dec.job, f"phá rào: xe địch {target.id}"
+    return dec
 
 
 def defense_posts(game, memory, n=4):
@@ -485,14 +600,30 @@ def collect(game, tank, memory, max_cost=30, kinds=None, claimed=None):
     return go_to(game, tank, anchor, prev, f"item:{it.kind}@{it.x},{it.y}")
 
 
-def unstick(game, tank):
-    """Fallback when a tank keeps getting rejected: one free cell in any direction."""
+def unstick(game, tank, memory=None, blocked=None):
+    """Thoát kẹt: back off 1-2 free cells AWAY from the blocked cell (if known), preferring cells
+    outside enemy lanes; next cycle the path is re-planned around the (penalised) blocked cell."""
+    s, danger = game.tank_size, danger_lanes(game)
+    others = [t for t in game.alive_tanks(True) if t.id != tank.id] + game.alive_tanks(False)
+    best = None
     for d in DIRS:
         dx, dy = DELTA[d]
-        ec = game.grid.enter_cost(tank.x + dx, tank.y + dy, game.tank_size, star3(tank))
-        if ec and not ec[1]:
-            return Decision(job=f"unstick:{d}", steps=[{"do": "move", "direction": d, "cells": 1}])
-    return Decision(job="unstick:fire", steps=[{"do": "move_fire", "direction": tank.dir or "up", "cells": 1}])
+        away = 0
+        if blocked:
+            away = -(dx * (blocked[0] - tank.x) + dy * (blocked[1] - tank.y))  # >0: moving away from it
+        for n in (2, 1):
+            cells = [(tank.x + dx * k, tank.y + dy * k) for k in range(1, n + 1)]
+            if all((ec := game.grid.enter_cost(x, y, s, star3(tank))) and not ec[1]
+                   and not any(abs(o.x - x) < s and abs(o.y - y) < s for o in others) for x, y in cells):
+                x, y = cells[-1]
+                score = -2 * (away > 0) + 2 * (away < 0) + danger.get((x, y), 0) - 0.5 * n
+                if best is None or score < best[0]:
+                    best = (score, d, n)
+                break
+    if best:
+        _, d, n = best
+        return Decision(job=f"unstick:{d}{n}", steps=[{"do": "move", "direction": d, "cells": n}], note="thoát kẹt")
+    return Decision(job="unstick:fire", steps=[{"do": "move_fire", "direction": tank.dir or "up", "cells": 1}], note="thoát kẹt")
 
 
 # ======================================================================
@@ -506,6 +637,7 @@ ROLE_HELP = {
     "rush": "như siege nhưng không xếp lượt, ai sẵn sàng thì bắn",
     "stage": "chỉ chiếm vị trí bắn đại bàng, không bắn (dùng khi còn giáp)",
     "hunt": "săn xe địch gần nhất",
+    "breaker": "phá hàng rào đạn: săn xe rào gần nhất từ phía nó không quay nòng (không có rào thì như hunt)",
     "defend": "chặn xe địch gần nhà, không có thì giữ chốt tốt nhất quanh nhà",
     "guard_front:N": "đứng chốt trước căn cứ ta N ô (mặc định 3), nòng hướng về phía địch, địch lao về thì ra chặn",
     "collect": "nhặt vật phẩm (⭐ trước)",
@@ -594,6 +726,8 @@ def run_role(role, game, tank, memory, ctx, free_fire=True, fire_bricks=0, item_
         dec = stage(game, tank, memory, ctx["taken"])
     elif name == "hunt":
         dec = hunt(game, tank, memory)
+    elif name == "breaker":
+        dec = break_fence(game, tank, memory, ctx.setdefault("posts", set())) or hunt(game, tank, memory)
     elif name == "defend":
         dec = defend(game, tank, memory, post_index=ctx["defend_idx"])
         ctx["defend_idx"] += 1
@@ -645,6 +779,14 @@ class Adaptive(Strategy):
 
     def decide(self, game, memory):
         phase, roles = self.phase(game, memory)
+        fences = memory.get("fences") or []
+        if fences and phase not in ("finish_eagle", "protect_lead"):
+            # a fence holds 2 enemy tanks: send 1 breaker per fence (max 2), taken from attack/hunt roles
+            need = min(2, len(fences))
+            for i in range(len(roles) - 1, -1, -1):
+                if need and roles[i] in ("siege", "hunt", "stage", "collect"):
+                    roles[i], need = "breaker", need - 1
+            phase += "+rào"
         memory["adaptive_phase"] = phase
         tanks = sorted(game.alive_tanks(True), key=lambda t: str(t.id))
         ctx = new_ctx()
@@ -942,6 +1084,7 @@ class Commander:
 
     def observe(self, game):
         self.remember_terrain(game)
+        self.memory["fences"] = detect_fences(game, self.memory)
         self.track_enemies(game)
         self.memory["fire_gap"] = self.min_fire_gap
         prev = self.prev
@@ -955,6 +1098,11 @@ class Commander:
                 self.memory["last_eagle_hit"] = game.now
             if tid is not None and tid in self.tanks and any(k in et for k in ("fail", "reject", "destroy", "kill", "respawn", "died")):
                 self.tanks[tid]["job"] = None
+            if "fail" in et or "block" in et:
+                cell = blocked_cell_from(ev)
+                mark_blocked(self.memory, cell, game.now)
+                if tid in self.tanks and cell:
+                    self.tanks[tid]["blocked"] = cell
         for t in game.my_tanks:
             tm = self.tanks.setdefault(t.id, {"job": None, "sent_at": -1e9, "fire_at": -1e9, "rejects": 0, "pos": t.pos})
             home_row = game.my_base[1]
@@ -980,7 +1128,7 @@ class Commander:
             if dec is None or tank is None or tm is None:
                 continue
             if tm["rejects"] >= 3:
-                dec, tm["rejects"] = unstick(game, tank), 0
+                dec, tm["rejects"] = unstick(game, tank, self.memory, tm.get("blocked")), 0
             changed = dec.job != tm["job"]
             idle = tank.busy is False
             stale = game.now - tm["sent_at"] > self.refresh_s
@@ -1050,6 +1198,10 @@ class Commander:
             else:
                 tm["job"] = None
                 tm["rejects"] = tm.get("rejects", 0) + 1
+                cell = blocked_cell_from(rejected.get(tid))
+                if cell:
+                    mark_blocked(self.memory, cell, time.time() if self.prev is None else self.prev.now)
+                    tm["blocked"] = cell
         for tid in sent:
             if tid not in rejected and tid in self.tanks:
                 self.tanks[tid]["rejects"] = 0
