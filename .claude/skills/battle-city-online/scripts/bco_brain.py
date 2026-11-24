@@ -5,7 +5,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 
-from bco_core import (DELTA, DIRS, ApiError, build_path, dijkstra, event_tank, event_type,
+from bco_core import (DELTA, DIRS, OVERLAY_CHARS, ApiError, build_path, dijkstra, event_tank, event_type,
                       find_rejections, overlaps, path_to_steps, trace)
 
 STRATEGIES = {}
@@ -903,6 +903,7 @@ class Commander:
         self.memory = {}          # team memory shared by strategies (eagle timing, caches...)
         self.tanks = {}           # per tank: job, sent_at, fire_at, rejects, pos
         self.prev = None          # previous Game
+        self.terrain = {}         # (x, y) -> last terrain seen there (to see under power-ups)
         self.log_path = log_path
         self.echo = echo
 
@@ -927,7 +928,20 @@ class Commander:
                 vel[e.id] = (0.6 * vx + 0.4 * ox, 0.6 * vy + 0.4 * oy)
         self.memory["enemy_vel"] = vel
 
+    def remember_terrain(self, game):
+        """Power-ups (P) hide the cell below them. Fill those cells with the terrain we saw there in
+        earlier cycles (usually brick → the path uses move_fire); record every visible cell."""
+        g = game.grid
+        for y, row in enumerate(g.rows):
+            for x, ch in enumerate(row):
+                if ch in OVERLAY_CHARS:
+                    if g.cells[y][x] == "item_cell" and (x, y) in self.terrain:
+                        g.cells[y][x] = self.terrain[(x, y)]
+                elif g.cells[y][x] != "eagle":
+                    self.terrain[(x, y)] = g.cells[y][x]
+
     def observe(self, game):
+        self.remember_terrain(game)
         self.track_enemies(game)
         self.memory["fire_gap"] = self.min_fire_gap
         prev = self.prev

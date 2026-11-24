@@ -52,7 +52,9 @@ còn nhiều mạng → xe ở lâu hơn trong nửa sân đối phương → b�
 
 Bản đồ ASCII còn **vẽ đè các khối 2×2** (nhìn từ phía bạn):
 `11` `22` `33` `44` = xe ta (chữ số = số xe) · `OO` = xe địch · `HH` = đại bàng ta (home) · `TT` = đại bàng địch (target) ·
-`PP` = vật phẩm. Script coi ô dưới chúng là đất trống, và dùng chúng để lấy vị trí xe/nhà/vật phẩm khi state thiếu trường,
+`PP` = vật phẩm. Vật phẩm hay rơi **đè lên gạch**, phải bắn vỡ gạch mới nhặt được: runner nhớ địa hình từng ô qua các nhịp
+nên biết dưới `PP` là gạch hay trống; chưa từng thấy thì coi là gạch và đi vào bằng `move_fire` (không có gạch thì nó chỉ đi).
+Dưới xe/đại bàng script coi là đất trống, và dùng chúng để lấy vị trí xe/nhà/vật phẩm khi state thiếu trường,
 cũng như đoán bên (HH ở nửa dưới → `bottom`).
 
 ## Vật phẩm

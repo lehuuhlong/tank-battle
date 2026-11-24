@@ -161,8 +161,13 @@ BULLET_THROUGH = {"empty", "tree", "ice", "water", "eagle"}
 class Grid:
     def __init__(self, rows, legend=None, unknown_as="empty"):
         legend = dict(legend or {".": "empty", "#": "brick", "@": "steel", "%": "tree", "~": "water", "-": "ice", " ": "empty"})
-        for ch in OVERLAY_CHARS:  # tanks / eagles / items drawn on the map sit on passable ground
+        for ch in OVERLAY_CHARS:  # tanks / eagles drawn on the map sit on passable ground
             legend.setdefault(ch, "empty")
+        # A power-up (P) is drawn over whatever is below it, often brick. Unknown ground = "item_cell":
+        # treated like brick (approach with move_fire, counts as a brick for bullets) until the
+        # runner fills it in from terrain remembered in earlier cycles.
+        if legend.get("P") in (None, "empty"):
+            legend["P"] = "item_cell"
         self.rows = list(rows)
         self.H, self.W = len(rows), max(len(r) for r in rows)
         self.unknown_chars = set()
@@ -198,7 +203,7 @@ class Grid:
         for k in self.footprint(x, y, s):
             if k in PASSABLE:
                 continue
-            if k == "brick" or (k == "steel" and star3):
+            if k in ("brick", "item_cell") or (k == "steel" and star3):
                 fire = True
                 continue
             return None
@@ -295,7 +300,7 @@ def trace(grid, origin, d, s, entities, star3=False, max_range=60):
             return {"kind": "wall", "obj": None, "anchor": None, "bricks": bricks, "dist": step}
         if "steel" in kinds and not star3:
             return {"kind": "steel", "obj": None, "anchor": None, "bricks": bricks, "dist": step}
-        if "brick" in kinds or "steel" in kinds:
+        if "brick" in kinds or "steel" in kinds or "item_cell" in kinds:
             bricks += 1
     return {"kind": "none", "obj": None, "anchor": None, "bricks": bricks, "dist": max_range}
 

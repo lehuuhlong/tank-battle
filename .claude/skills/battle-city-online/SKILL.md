@@ -57,6 +57,7 @@ Dữ liệu từng trận nằm trong `./bco-data/<CODE>/`: match.json, rules.js
   - `-` băng.
 - Bản đồ vẽ đè các khối 2×2: `11`-`44` là xe ta (chữ số là số xe), `OO` xe địch, `HH` nhà ta, `TT` nhà địch, `PP` vật phẩm.
   Script tự đọc các ký hiệu này khi state thiếu trường, và đoán bên của ta từ vị trí `HH`.
+  Vật phẩm hay rơi đè lên gạch. Runner nhớ địa hình dưới `PP` từ các nhịp trước, chưa biết thì coi là gạch, và tự đi vào bằng `move_fire` để nhặt.
 - Thẳng hàng để bắn: cùng cột khi `|Δx| ≤ 1`, cùng hàng khi `|Δy| ≤ 1`. Giữa hai bên không được có thép, xe ta, hay **đại bàng ta**.
 - Muốn phá nhà phải đứng ở nửa sân địch (bên dưới: `y ≤ 19`; bên trên: `y ≥ 21`). Đánh vào hông thường dễ hơn đánh chính diện.
 
