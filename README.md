@@ -38,23 +38,78 @@ claude-launcher-<TeamNo>.exe --allowedTools "Bash(curl:*)" "Bash(python:*)" "Bas
 ```
 
 ## Prompt đầu trận
-Gõ prompt **trước** khi bấm Sẵn sàng. Agent phải gọi API cho phòng thì nút Sẵn sàng mới bật.
+Gõ prompt **trước** khi bấm Sẵn sàng. Agent phải gọi API cho phòng thì nút Sẵn sàng mới bật. Thay `ABCD` bằng mã phòng của bạn.
+
+### Prompt mẫu đầy đủ
+Mỗi ý trong prompt khớp với một vai hoặc một điều kiện mà skill hiểu, nên agent dịch sang `plan.json` mà không phải đoán.
 ```
 Dùng skill battle-city-online. PHÒNG: ABCD.
-Chiến thuật trận này:
-- Xe 1 và Xe 2 vào hông trái căn cứ địch, bắn lần lượt.
-- Xe 3 săn xe địch gần nhất, gặp sao gần đường thì ghé nhặt.
-- Xe 4 chốt trước căn cứ mình 3 ô, nòng hướng về phía địch.
-- 3 phút đầu: xe 1-3 săn xe và nhặt sao.
-- Căn cứ mình còn 2 máu: Xe 3 về giữ nhà cùng Xe 4.
-- Còn dưới 60 giây mà đang dẫn điểm: cả bốn xe về giữ nhà.
-Chơi tới khi trận kết thúc.
+
+Chiến thuật trận này (dịch thành plan.json, chạy scripted):
+
+Đội hình chính (sau khi hết giáp):
+- Xe 1: vây đại bàng địch từ hông trái.
+- Xe 2: vây đại bàng địch từ hông phải. Xe 1 và Xe 2 bắn lần lượt, cách nhau hơn 5 giây.
+- Xe 3: săn xe địch gần nhất, gặp vật phẩm gần đường thì ghé nhặt.
+- Xe 4: chốt trước căn cứ mình 3 ô, nòng hướng về phía địch; địch lao về thì ra chặn.
+
+3 phút đầu (đại bàng còn giáp):
+- Xe 1, 2, 3 săn xe địch và nhặt vật phẩm, ưu tiên sao. Xe 4 vẫn chốt nhà.
+- Xe nào đủ 3 sao thì đi phá căn cứ địch ngay, không chờ hết giáp.
+
+Đổi vai theo tình huống (luật sau ghi đè luật trước):
+- Căn cứ mình vừa bị bắn: Xe 4 ra chặn xe đang bắn nhà.
+- Căn cứ mình còn 2 máu trở xuống: Xe 3 giữ hông trái, Xe 4 giữ hông phải.
+- Xe nào còn 3 mạng trở xuống: về giữ nhà (giữ mạng để thắng khi hoà điểm).
+- Đại bàng địch còn 2 máu trở xuống: Xe 3 cũng đi vây, hông nào gần thì đánh hông đó.
+- Còn dưới 60 giây đồng hồ game mà đang dẫn điểm: cả 4 xe về giữ nhà.
+- Còn dưới 90 giây đồng hồ game mà đang thua điểm: cả 4 xe lao vào bắn căn cứ địch, không cần xếp lượt.
+
+Lưu ý:
+- Không bắn vỡ tường quanh căn cứ mình.
+- Ưu tiên nhặt sao và xẻng.
+- Gặp hàng rào đạn (2 xe địch quay mặt vào nhau) thì không đi xuyên, đánh xe rào từ phía nó không quay nòng.
+
+Chơi tới khi trận kết thúc. Không dừng, không hỏi lại giữa trận. Mỗi vòng in một dòng trạng thái.
 ```
-Agent dịch phần chiến thuật thành `bco-data/<CODE>/plan.json`, chạy vòng điều khiển ở chế độ nền và giám sát tới hết trận.
 
-Muốn chỉnh giữa trận: bấm **Esc**, gõ chỉ đạo mới, kết thúc bằng câu "Tiếp tục chơi tới hết trận".
+### Agent dịch thành `plan.json`
+Bạn có thể dùng để kiểm tra agent dịch đúng không. File nằm ở `bco-data/<CODE>/plan.json`; sửa giữa trận thì có hiệu lực ngay ở nhịp sau.
+```json
+{
+  "roles": {"1": "siege_left", "2": "siege_right", "3": "hunt+collect", "4": "guard_front:3"},
+  "rules": [
+    {"when": {"armor": true}, "roles": {"1": "hunt+collect", "2": "hunt+collect", "3": "hunt+collect"}},
+    {"when": {"armor": true, "tank_stars_gte": 3}, "roles": {"1": "siege_left", "2": "siege_right", "3": "siege_side"}},
+    {"when": {"my_base_hit": true}, "roles": {"4": "defend"}},
+    {"when": {"my_base_hp_lte": 2}, "roles": {"3": "guard_left", "4": "guard_right"}},
+    {"when": {"tank_lives_lte": 3}, "roles": {"*": "defend"}},
+    {"when": {"enemy_base_hp_lte": 2}, "roles": {"3": "siege_side"}},
+    {"when": {"time_left_lte": 60, "lead_gte": 1}, "roles": {"*": "defend"}},
+    {"when": {"time_left_lte": 90, "lead_lte": -1}, "roles": {"*": "rush"}}
+  ]
+}
+```
 
-Không muốn tự nghĩ chiến thuật thì dùng: `Dùng skill battle-city-online, PHÒNG ABCD, chiến thuật adaptive. Chơi tới khi trận kết thúc.`
+### Những phần chạy tự động, không cần ghi vào prompt
+Với mọi chiến thuật, runner luôn tự làm:
+- **Phản xạ mỗi nhịp 0,5 giây:** bắn ngay khi địch thẳng hàng, bắn đón khi địch sắp cắt ngang làn, né khi bị nhắm mà chưa bắn trả được.
+- **Cứu nhà:** xe địch nào có đường đạn tới đại bàng ta thì xe ta gần nhất bắn nó hoặc lao vào chắn làn.
+- **Tình huống khó:** tự tránh hàng rào đạn, tự đi vòng khi kẹt đường, phá gạch dưới vật phẩm để nhặt.
+
+### Chỉnh giữa trận
+Bấm **Esc**, gõ chỉ đạo mới, và luôn kết thúc bằng câu "Tiếp tục chơi tới hết trận". Trong lúc bạn gõ, xe vẫn đánh vì vòng điều khiển chạy nền.
+```
+Địch dồn cả hai hông. Xe 3 giữ hông trái, Xe 4 giữ hông phải, Xe 1 và 2 tiếp tục vây.
+Tiếp tục chơi tới hết trận.
+```
+
+### Bản ngắn
+Khi không muốn tự nghĩ chiến thuật:
+```
+Dùng skill battle-city-online. PHÒNG: ABCD. Chiến thuật adaptive.
+Chơi tới khi trận kết thúc. Không dừng, không hỏi lại giữa trận.
+```
 
 ## Chiến thuật
 | Tên | Ý chính |
