@@ -1,5 +1,5 @@
 {
-  "_comment": "Ánh xạ trường của GET /state sang mô hình chuẩn hoá. Mỗi khoá nhận 1 đường dẫn (chuỗi) hoặc danh sách đường dẫn thử lần lượt. Đường dẫn dạng a.b.0.c; {me}/{enemy} được thay bằng 'top'/'bottom'. Để trống (null) = tự dò. Chạy probe_schema.py trên state thật rồi điền.",
+  "_comment": "Ánh xạ trường của GET /state sang mô hình chuẩn hoá. Mỗi khoá nhận 1 đường dẫn (chuỗi) hoặc danh sách đường dẫn thử lần lượt. Đường dẫn dạng a.b.0.c; {me}/{enemy} được thay bằng 'top'/'bottom'. Để trống (null) = tự dò. Chạy `bco.py probe` trên state thật rồi điền.",
   "status": null,
   "time_left": null,
   "armor_left": null,

@@ -1,16 +1,313 @@
-"""Normalize the (undocumented) GET /state JSON into a Game object.
-
-Field names come from references/state-schema.json; any field left null is auto-detected
-from a list of common names. Run probe_schema.py on a real state to see what was found.
-"""
+"""Battle City Online — lõi: HTTP client, bản đồ/tìm đường/đường đạn, chuẩn hoá state. Chỉ dùng thư viện chuẩn."""
+import heapq
 import json
+import os
 import re
+import sys
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 
-from . import SCHEMA_PATH
-from .grid import Grid
+SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCHEMA_PATH = os.path.join(SKILL_DIR, "references", "state-schema.json")
 
+# Windows consoles default to cp1252/cp437: force UTF-8 so Vietnamese text and emoji print.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+# ======================================================================
+# CLIENT
+# ======================================================================
+DEFAULT_BASE = "http://tank.recoff.cloud/api/v1"
+
+
+class ApiError(Exception):
+    def __init__(self, status, body, url):
+        self.status, self.body, self.url = status, body, url
+        super().__init__(f"HTTP {status} {url}: {body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)[:500]}")
+
+
+class Client:
+    def __init__(self, token=None, base_url=None, model=None, timeout=10, retries=3):
+        self.token = token or os.environ.get("BCO_TOKEN")
+        if not self.token:
+            raise SystemExit("BCO_TOKEN chưa được đặt (export BCO_TOKEN=...)")
+        self.base = (base_url or os.environ.get("BCO_BASE_URL") or DEFAULT_BASE).rstrip("/")
+        self.model = model or os.environ.get("BCO_AGENT_MODEL")
+        self.timeout = timeout
+        self.retries = retries
+
+    # -- low level -------------------------------------------------------
+    def request(self, method, path, body=None, params=None):
+        url = self.base + path
+        if params:
+            url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+        headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
+        if self.model:
+            headers["X-Agent-Model"] = self.model
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+        last = None
+        for attempt in range(self.retries + 1):
+            req = urllib.request.Request(url, data=data, method=method, headers=headers)
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                    return _decode(r.read())
+            except urllib.error.HTTPError as e:
+                payload = _decode(e.read())
+                if e.code == 429:  # rate limited: back off and retry
+                    last = ApiError(e.code, payload, url)
+                    retry_after = e.headers.get("Retry-After") if e.headers else None
+                    time.sleep(float(retry_after) if retry_after and retry_after.replace(".", "").isdigit() else 1.0 * (attempt + 1))
+                    continue
+                # 4xx are answers (e.g. rejected orders): do not retry, surface them
+                if 400 <= e.code < 500:
+                    raise ApiError(e.code, payload, url)
+                last = ApiError(e.code, payload, url)
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+                last = e
+            time.sleep(0.3 * (attempt + 1))
+        raise last
+
+    # -- endpoints -------------------------------------------------------
+    def matches(self):
+        return self.request("GET", "/matches")
+
+    def match(self, code):
+        return self.request("GET", f"/matches/{code}")
+
+    def rules(self, code):
+        return self.request("GET", f"/matches/{code}/rules")
+
+    def state(self, code, with_map=True):
+        return self.request("GET", f"/matches/{code}/state", params={"map": "true"} if with_map else None)
+
+    def plan(self, code, steps):
+        return self.request("POST", f"/matches/{code}/plan", {"steps": steps})
+
+    def order(self, code, step):
+        return self.request("POST", f"/matches/{code}/orders", step)
+
+    def stop(self, code, tank):
+        return self.request("POST", f"/matches/{code}/stop", {"tank": tank})
+
+
+def _decode(raw):
+    text = raw.decode("utf-8", "replace") if raw else ""
+    try:
+        return json.loads(text) if text else {}
+    except json.JSONDecodeError:
+        return text
+
+
+def find_rejections(response, sent_tanks):
+    """Best-effort: return {tank_id: reason} for tanks the server rejected in a /plan response.
+
+    The response format is not documented, so we look for any dict that names a tank and
+    carries an error/reason/ok=false/accepted=false. Unknown formats -> {} (log the raw reply).
+    """
+    out = {}
+
+    def visit(node):
+        if isinstance(node, dict):
+            tank = node.get("tank", node.get("tank_id", node.get("id")))
+            failed = (
+                node.get("ok") is False
+                or node.get("accepted") is False
+                or node.get("success") is False
+                or str(node.get("status", "")).lower() in ("rejected", "error", "failed")
+                or ("error" in node and node["error"])
+            )
+            if tank is not None and failed:
+                out[_tank_key(tank)] = node.get("error") or node.get("reason") or node.get("message") or node
+            for k, v in node.items():
+                if k in ("rejected", "errors", "failed") and isinstance(v, dict):
+                    for tk, reason in v.items():
+                        out[_tank_key(tk)] = reason
+                visit(v)
+        elif isinstance(node, list):
+            for v in node:
+                visit(v)
+
+    visit(response)
+    return {k: v for k, v in out.items() if k in {_tank_key(t) for t in sent_tanks}} or out
+
+
+def _tank_key(t):
+    try:
+        return int(t)
+    except (TypeError, ValueError):
+        return t
+
+
+# ======================================================================
+# GRID
+# ======================================================================
+DELTA = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
+DIRS = ("up", "right", "down", "left")
+
+PASSABLE = {"empty", "tree", "ice"}
+BULLET_THROUGH = {"empty", "tree", "ice", "water", "eagle"}
+
+
+class Grid:
+    def __init__(self, rows, legend=None, unknown_as="empty"):
+        legend = legend or {".": "empty", "#": "brick", "@": "steel", "%": "tree", "~": "water", "-": "ice", " ": "empty"}
+        self.rows = list(rows)
+        self.H, self.W = len(rows), max(len(r) for r in rows)
+        self.unknown_chars = set()
+        self.cells = []
+        for r in rows:
+            line = []
+            for ch in r.ljust(self.W, "."):
+                kind = legend.get(ch)
+                if kind is None:
+                    self.unknown_chars.add(ch)
+                    kind = unknown_as
+                line.append(kind)
+            self.cells.append(line)
+
+    def at(self, x, y):
+        if 0 <= x < self.W and 0 <= y < self.H:
+            return self.cells[y][x]
+        return "wall"
+
+    def mark_block(self, anchor, s, kind):
+        x0, y0 = anchor
+        for y in range(y0, y0 + s):
+            for x in range(x0, x0 + s):
+                if 0 <= x < self.W and 0 <= y < self.H:
+                    self.cells[y][x] = kind
+
+    def footprint(self, x, y, s):
+        return [self.at(x + i, y + j) for j in range(s) for i in range(s)]
+
+    def enter_cost(self, x, y, s, star3=False):
+        """Cost of putting a tank's anchor at (x, y); None if impossible. Returns (cost, needs_fire)."""
+        fire = False
+        for k in self.footprint(x, y, s):
+            if k in PASSABLE:
+                continue
+            if k == "brick" or (k == "steel" and star3):
+                fire = True
+                continue
+            return None
+        return (4 if fire else 1), fire
+
+
+def overlaps(ax, ay, bx, by, s):
+    return abs(ax - bx) < s and abs(ay - by) < s
+
+
+def dijkstra(grid, start, s, star3=False, penalties=None, max_cost=None):
+    """Shortest paths over tank anchors. Returns dist {anchor: cost} and prev {anchor: parent}."""
+    penalties = penalties or {}
+    dist, prev = {start: 0}, {}
+    pq = [(0, start)]
+    while pq:
+        c, cur = heapq.heappop(pq)
+        if c > dist.get(cur, 1e9):
+            continue
+        if max_cost is not None and c > max_cost:
+            break
+        for d in DIRS:
+            dx, dy = DELTA[d]
+            nxt = (cur[0] + dx, cur[1] + dy)
+            ec = grid.enter_cost(nxt[0], nxt[1], s, star3)
+            if ec is None:
+                continue
+            nc = c + ec[0] + penalties.get(nxt, 0)
+            if nc < dist.get(nxt, 1e9):
+                dist[nxt], prev[nxt] = nc, cur
+                heapq.heappush(pq, (nc, nxt))
+    return dist, prev
+
+
+def build_path(prev, start, goal):
+    if goal != start and goal not in prev:
+        return None
+    path = [goal]
+    while path[-1] != start:
+        path.append(prev[path[-1]])
+    return path[::-1]
+
+
+def path_to_steps(grid, path, s, star3=False, max_steps=5):
+    """Compress anchor path into move / move_fire commands (straight runs)."""
+    steps = []
+    for a, b in zip(path, path[1:]):
+        d = next(k for k, v in DELTA.items() if v == (b[0] - a[0], b[1] - a[1]))
+        fire = grid.enter_cost(b[0], b[1], s, star3)[1]
+        do = "move_fire" if fire else "move"
+        if steps and steps[-1]["direction"] == d and steps[-1]["do"] == do:
+            steps[-1]["cells"] += 1
+        else:
+            if len(steps) >= max_steps:
+                break
+            steps.append({"do": do, "direction": d, "cells": 1})
+    return steps
+
+
+def direction_between(a, b, s):
+    """If b's footprint is in a straight lane from a, return the direction to fire; else None."""
+    ax, ay = a
+    bx, by = b
+    if abs(ax - bx) < s:
+        return "up" if by < ay else "down" if by > ay else None
+    if abs(ay - by) < s:
+        return "left" if bx < ax else "right" if bx > ax else None
+    return None
+
+
+def trace(grid, origin, d, s, entities, star3=False, max_range=60):
+    """Follow a bullet lane from a tank at `origin` in direction d.
+
+    entities: list of (kind, anchor, obj). Returns dict(kind, obj, anchor, bricks, dist) for the
+    first entity hit, or dict(kind='steel'/'wall', ...) when blocked. Bricks are counted (each
+    roughly needs one extra shot), steel blocks unless star3.
+    """
+    x, y = origin
+    dx, dy = DELTA[d]
+    bricks = 0
+    for step in range(1, max_range + 1):
+        if dy:  # vertical lane: columns x..x+s-1, one row at a time
+            r = y - step if dy < 0 else y + s - 1 + step
+            cells = [(x + i, r) for i in range(s)]
+        else:
+            c = x - step if dx < 0 else x + s - 1 + step
+            cells = [(c, y + j) for j in range(s)]
+        # entities first (they sit on passable cells / eagle cells)
+        for kind, (ex, ey), obj in entities:
+            if any(ex <= cx < ex + s and ey <= cy < ey + s for cx, cy in cells):
+                return {"kind": kind, "obj": obj, "anchor": (ex, ey), "bricks": bricks, "dist": step}
+        kinds = [grid.at(cx, cy) for cx, cy in cells]
+        if all(k == "wall" for k in kinds):
+            return {"kind": "wall", "obj": None, "anchor": None, "bricks": bricks, "dist": step}
+        if "steel" in kinds and not star3:
+            return {"kind": "steel", "obj": None, "anchor": None, "bricks": bricks, "dist": step}
+        if "brick" in kinds or "steel" in kinds:
+            bricks += 1
+    return {"kind": "none", "obj": None, "anchor": None, "bricks": bricks, "dist": max_range}
+
+
+def render(grid, overlays=None):
+    """ASCII render with overlays {(x, y): char} (anchor cells)."""
+    rows = [list(r) for r in grid.rows]
+    for (x, y), ch in (overlays or {}).items():
+        if 0 <= y < grid.H and 0 <= x < grid.W:
+            rows[y][x] = ch
+    return "\n".join("".join(r) for r in rows)
+
+
+# ======================================================================
+# STATE
+# ======================================================================
 DIRS = ("up", "right", "down", "left")
 OPPOSITE = {"top": "bottom", "bottom": "top"}
 

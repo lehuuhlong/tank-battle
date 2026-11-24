@@ -1,36 +1,34 @@
 # tank-battle — Agent + skill cho Battle City Online
 
-Agent và skill cho Claude Code để chơi [Battle City Online](http://tank.recoff.cloud): chỉ huy 4 xe tăng qua HTTP API tới hết trận.
-Có script Python (chỉ dùng thư viện chuẩn) để tìm đường cho xe 2×2, bắn khi thẳng hàng, và 8 chiến thuật có thể đổi giữa trận.
+Agent và skill cho Claude Code để chơi [Battle City Online](http://tank.recoff.cloud) qua HTTP API, chỉ huy 4 xe tăng tới hết trận.
+Script viết bằng Python, chỉ dùng thư viện chuẩn. Có sẵn tìm đường cho xe 2×2, bắn khi thẳng hàng, và 8 chiến thuật có thể đổi giữa trận.
 
-| Thành phần | Đường dẫn |
-|---|---|
-| Subagent `bco-commander` | `.claude/agents/bco-commander.md` |
-| Skill `battle-city-online` | `.claude/skills/battle-city-online/SKILL.md` |
-| Luật + API | `.claude/skills/battle-city-online/references/quick-reference.md` |
-| Chiến thuật | `.claude/skills/battle-city-online/references/strategies.md` |
-| Script | `.claude/skills/battle-city-online/scripts/` |
+```
+.claude/agents/bco-commander.md                 subagent chỉ huy trận
+.claude/skills/battle-city-online/
+  SKILL.md                                      quy trình cho agent
+  references/rules.md                           luật, API, vai và chiến thuật
+  references/state-schema.json                  ánh xạ các trường của state (điền ở trận đầu)
+  scripts/bco.py                                CLI: info, rules, state, probe, analyze, run, watch, plan, order, stop
+  scripts/bco_core.py                           HTTP client, bản đồ, tìm đường, đường đạn, chuẩn hoá state
+  scripts/bco_brain.py                          tactics, các chiến thuật, runner gửi lệnh
+```
 
 ## Cài đặt
 Cần **Python 3.9+** và Claude Code.
 
-**Cách 1: dùng như một project.** Clone repo rồi mở Claude Code trong thư mục này. Skill và agent được nhận tự động.
+Có hai cách:
+- **Dùng như project:** clone repo rồi mở Claude Code trong thư mục `tank-battle`.
+- **Dùng ở mọi thư mục:** chép nội dung `.claude/` vào `~/.claude/` (lệnh thứ hai bên dưới).
+
 ```bash
 git clone https://github.com/lehuuhlong/tank-battle
 ```
-```bash
-cd tank-battle
-```
-
-**Cách 2: cài cho mọi thư mục.** Chép nội dung `.claude/` vào `~/.claude/`.
 ```powershell
-Copy-Item -Recurse -Force .\.claude\* "$HOME\.claude\"
-```
-```bash
-cp -r .claude/* ~/.claude/
+Copy-Item -Recurse -Force .\tank-battle\.claude\* "$HOME\.claude\"
 ```
 
-Đặt token (trong terminal sẽ mở Claude Code), rồi mở launcher và cho phép sẵn các lệnh cần dùng:
+Đặt token, rồi mở Claude Code với quyền chạy lệnh được cấp sẵn để agent không phải hỏi giữa trận:
 ```powershell
 $env:BCO_TOKEN = "token-của-bạn"
 ```
@@ -51,13 +49,17 @@ Chiến thuật trận này:
 - Còn dưới 60 giây mà đang dẫn điểm: cả bốn xe về giữ nhà.
 Chơi tới khi trận kết thúc.
 ```
-Agent dịch chiến thuật này thành `bco-data/<CODE>/plan.json`, gồm vai của từng xe và các luật đổi vai. Sau đó nó chạy vòng điều khiển ở chế độ nền và giám sát tới hết trận. Muốn chỉnh giữa trận: bấm **Esc**, gõ chỉ đạo mới, và kết thúc bằng "Tiếp tục chơi tới hết trận".
+Agent dịch phần chiến thuật thành `bco-data/<CODE>/plan.json`, chạy vòng điều khiển ở chế độ nền và giám sát tới hết trận.
+
+Muốn chỉnh giữa trận: bấm **Esc**, gõ chỉ đạo mới, kết thúc bằng câu "Tiếp tục chơi tới hết trận".
+
+Không muốn tự nghĩ chiến thuật thì dùng: `Dùng skill battle-city-online, PHÒNG ABCD, chiến thuật adaptive. Chơi tới khi trận kết thúc.`
 
 ## Chiến thuật
 | Tên | Ý chính |
 |---|---|
 | `scripted` | Làm theo `plan.json` dịch từ prompt của bạn |
-| `adaptive` | Tự đổi vai theo giáp, máu nhà, điểm và thời gian (mặc định) |
+| `adaptive` | Tự đổi vai theo giáp, máu nhà, điểm, thời gian (mặc định) |
 | `siege` | Vây đại bàng địch, bắn lần lượt cách nhau hơn 5 giây |
 | `rush` | Cả đội lao vào bắn đại bàng |
 | `hunter` | Mỗi xe săn một xe địch |
@@ -65,20 +67,10 @@ Agent dịch chiến thuật này thành `bco-data/<CODE>/plan.json`, gồm vai 
 | `collector` | Ưu tiên nhặt vật phẩm, ⭐ trước |
 | `balanced` | Tự xếp vai theo thứ tự xe |
 
-Các vai: `siege`, `siege_left`, `siege_right`, `siege_side`, `siege_front`, `rush`, `stage`, `hunt`, `defend`, `guard_front:N`, `collect`, `hold`, và hậu tố `<vai>+collect`.
-
 ## Trận đầu tiên với server thật
-Tên các trường trong `state` chưa được điền sẵn; script tự dò theo các tên thường gặp. Ở trận đầu (nên dùng phòng Luyện tập với bot), agent sẽ chạy `probe_schema.py`, đối chiếu với mục **Tài liệu API** trên trang Hướng dẫn, rồi điền vào `references/state-schema.json`. Chỉ cần làm một lần.
+Tên các trường trong `state` chưa được điền sẵn; script đang tự dò theo các tên thường gặp. Ở trận đầu, tốt nhất là phòng Luyện tập với bot:
+1. agent chạy `bco.py probe`;
+2. đối chiếu với mục **Tài liệu API** trên trang Hướng dẫn của game;
+3. điền vào `references/state-schema.json`.
 
-## Thử offline
-Không cần server thật:
-```bash
-cd .claude/skills/battle-city-online/scripts
-```
-```bash
-python bench.py
-```
-```bash
-python analyze_state.py fixtures/sample_state.json --side bottom
-```
-`bench.py` so sánh các chiến thuật trên server giả lập (`mock_server.py`). Server này chỉ dùng để kiểm tra code chạy đúng, không phải engine thật của game.
+Chỉ cần làm một lần.
