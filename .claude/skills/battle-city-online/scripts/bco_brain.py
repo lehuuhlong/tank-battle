@@ -127,6 +127,118 @@ def opportunistic_fire(game, tank, memory, max_bricks=0, max_range=18, allow_bas
     return None
 
 
+# ---------------------------------------------------------------- reflexes (fast, every cycle)
+def can_fire(game, tank, memory):
+    return game.now - memory.get("fire_at", {}).get(tank.id, -1e9) >= memory.get("fire_gap", 0.6)
+
+
+def lead_fire(game, tank, memory, max_range=14):
+    """Bắn đón: an enemy moving across one of our lanes will be in it when the bullet arrives.
+
+    Uses enemy velocity estimated by the runner (memory["enemy_vel"], cells/s). Bullet speed and
+    command latency come from state-schema.json (bullet_cells_per_s, reaction_latency_s)."""
+    vel = memory.get("enemy_vel") or {}
+    bs = float(game.schema.get("bullet_cells_per_s", 8.0))
+    lat = float(game.schema.get("reaction_latency_s", 0.6))
+    s = game.tank_size
+    for e in game.alive_tanks(False):
+        v = vel.get(e.id)
+        if e.shield or not v or abs(v[0]) + abs(v[1]) < 0.8:
+            continue
+        for d in DIRS:
+            dx, dy = DELTA[d]
+            if (dx and abs(v[0]) >= abs(v[1])) or (dy and abs(v[1]) >= abs(v[0])):
+                continue  # only lanes the enemy crosses (perpendicular to its motion)
+            if (dy and abs(e.x - tank.x) < s) or (dx and abs(e.y - tank.y) < s):
+                continue  # already in the lane: opportunistic_fire handles it
+            along = (e.x - tank.x) * dx + (e.y - tank.y) * dy
+            if along < s or along > max_range:
+                continue
+            t_hit = lat + (along - s + 1) / bs
+            px, py = round(e.x + v[0] * t_hit), round(e.y + v[1] * t_hit)
+            if (dy and abs(px - tank.x) >= s) or (dx and abs(py - tank.y) >= s):
+                continue
+            if game.grid.enter_cost(px, py, s) is None:
+                continue  # it cannot get there (wall/water)
+            ents = [(k, (px, py) if o is e else a, o) for k, a, o in entities_for(game, tank)]
+            hit = trace(game.grid, tank.pos, d, s, ents, star3(tank), max_range + 2)
+            if hit["kind"] == "enemy" and hit["obj"] is e and hit["bricks"] == 0:
+                return Decision(job=f"lead:{d}", steps=[fire_step(d, 2)], urgent=True, note=f"bắn đón xe địch {e.id}")
+    return None
+
+
+def threats_to(game, tank, rng=16):
+    """Enemies that can hit `tank` right now: straight lane, nothing but air between, facing it
+    (or close enough to turn and shoot within a tick). Returns [(dist, enemy, dir_from_enemy)]."""
+    s, out = game.tank_size, []
+    for e in game.alive_tanks(False):
+        if abs(e.x - tank.x) < s:
+            d = "down" if tank.y > e.y else "up"
+            dist = abs(tank.y - e.y)
+        elif abs(e.y - tank.y) < s:
+            d = "right" if tank.x > e.x else "left"
+            dist = abs(tank.x - e.x)
+        else:
+            continue
+        if dist > rng or (e.dir and e.dir != d and dist > 6):
+            continue
+        ents = [("mine", t.pos, t) for t in game.alive_tanks(True)]
+        ents += [("other", o.pos, o) for o in game.alive_tanks(False) if o is not e]
+        ents += [("base", game.my_base, None), ("base", game.enemy_base, None)]
+        hit = trace(game.grid, e.pos, d, s, ents, star3(e), rng + 2)
+        if hit["kind"] == "mine" and hit["obj"] is tank and hit["bricks"] == 0:
+            out.append((dist, e, d))
+    return sorted(out, key=lambda t: t[0])
+
+
+def dodge(game, tank, memory):
+    """Né: step sideways out of every threatening lane, to a free cell not in another enemy lane."""
+    if tank.shield:
+        return None
+    threats = threats_to(game, tank)
+    if not threats:
+        return None
+    s, danger = game.tank_size, danger_lanes(game)
+    others = [t for t in game.alive_tanks(True) if t.id != tank.id] + game.alive_tanks(False)
+    best = None
+    for dd in DIRS:
+        dx, dy = DELTA[dd]
+        for n in range(1, 5):
+            x, y = tank.x + dx * n, tank.y + dy * n
+            ec = game.grid.enter_cost(x, y, s)
+            if ec is None or ec[1] or any(abs(o.x - x) < s and abs(o.y - y) < s for o in others):
+                break  # blocked (brick needs shooting: too slow for a dodge)
+            if any((abs(e.x - x) < s) if d in ("up", "down") else (abs(e.y - y) < s) for _, e, d in threats):
+                continue  # still in a threatening lane: keep sliding
+            score = n + 3 * danger.get((x, y), 0)
+            if best is None or score < best[0]:
+                best = (score, dd, n)
+            break
+    if not best:
+        return None
+    _, dd, n = best
+    return Decision(job=f"dodge:{dd}{n}@{tank.x},{tank.y}", steps=[{"do": "move", "direction": dd, "cells": n}],
+                    note=f"né xe địch {threats[0][1].id}")
+
+
+def reflex(game, tank, memory, max_bricks=0, max_range=18, allow_base=False, dodge_ok=True):
+    """Phản xạ mỗi nhịp, theo thứ tự: bắn ngay (địch đã thẳng hàng) → bắn đón (địch sắp cắt ngang làn)
+    → né (bị nhắm mà chưa bắn trả được). None = không có gì gấp, làm việc của vai."""
+    if can_fire(game, tank, memory):
+        dec = opportunistic_fire(game, tank, memory, max_bricks, max_range, allow_base) or lead_fire(game, tank, memory)
+        if dec:
+            return dec
+    if not dodge_ok:
+        return None
+    dec = dodge(game, tank, memory)
+    if dec is None and threats_to(game, tank):
+        # boxed in (no free side cell) while targeted: shoot back now rather than wait for the cooldown
+        dec = opportunistic_fire(game, tank, memory, max_bricks, max_range, allow_base)
+        if dec:
+            dec.job, dec.note = dec.job + ":boxed", "bị kẹp, bắn trả"
+    return dec
+
+
 def spot_side(spot, d, eagle):
     if d in ("left", "right"):
         return "left" if spot[0] < eagle[0] else "right"
@@ -405,7 +517,7 @@ ROLE_HELP = {
 class Strategy:
     """Base class. Override `roles()` for role-based strategies, or `decide()` for full control.
 
-    Every tank first checks opportunistic_fire (free shots at enemy tanks in a straight lane)
+    Every tank first runs reflex(): shoot an aligned enemy, lead-shoot a crossing one, or dodge
     unless the role is `stage`. During armor, siege-type roles stage instead, except 3-star tanks
     (they can break the armor steel).
     """
@@ -458,9 +570,9 @@ def run_role(role, game, tank, memory, ctx, free_fire=True, fire_bricks=0, item_
     base = role[: -len("+collect")] if detour else role
     name, _, arg = base.partition(":")
 
-    if free_fire and name != "stage":
-        shot = opportunistic_fire(game, tank, memory, max_bricks=fire_bricks, max_range=fire_range,
-                                    allow_base=(name == "rush"))  # siege shoots the eagle only in rotation
+    if free_fire:
+        shot = reflex(game, tank, memory, max_bricks=fire_bricks, max_range=fire_range,
+                      allow_base=(name == "rush"))  # siege shoots the eagle only in rotation
         if shot:
             shot.job = f"{role}|{shot.job}"
             return shot
@@ -542,7 +654,7 @@ class Adaptive(Strategy):
             if phase == "armor" and star3(tank) and role != "defend":
                 role = "siege"  # 3 stars break the armor steel: the eagle is open to this tank
             if role == "collect":
-                shot = opportunistic_fire(game, tank, memory, allow_base=False)
+                shot = reflex(game, tank, memory)
                 dec = shot or collect(game, tank, memory, claimed=ctx["claimed"])
                 if dec:
                     dec.job = f"{phase}:collect|{dec.job}"
@@ -693,7 +805,7 @@ class Hunter(Strategy):
         out, taken = {}, {}
         cap = 2 if self.p("pair", False) else 1
         for tank in tanks:
-            shot = opportunistic_fire(game, tank, memory, max_bricks=self.p("fire_bricks", 0), allow_base=False)
+            shot = reflex(game, tank, memory, max_bricks=self.p("fire_bricks", 0))
             if shot:
                 shot.job = "hunter|" + shot.job
                 out[tank.id] = shot
@@ -748,7 +860,7 @@ class Collector(Strategy):
         ctx = new_ctx()
         out = {}
         for i, tank in enumerate(tanks):
-            shot = opportunistic_fire(game, tank, memory, allow_base=False)
+            shot = reflex(game, tank, memory)
             if shot:
                 shot.job = "collect|" + shot.job
                 out[tank.id] = shot
@@ -795,7 +907,29 @@ class Commander:
         self.echo = echo
 
     # ------------------------------------------------------------ observation
+    def track_enemies(self, game):
+        """Estimate enemy velocity (cells/s) by matching each enemy to the nearest one last cycle
+        (ids from the ASCII map are not stable). Smoothed; reset on teleport/respawn."""
+        prev, vel = self.prev, {}
+        old = self.memory.get("enemy_vel") or {}
+        if prev:
+            dt = game.now - prev.now
+            pool = list(prev.enemy_tanks)
+            for e in game.enemy_tanks:
+                if not pool or dt <= 0 or dt > 3:
+                    break
+                p = min(pool, key=lambda q: abs(q.x - e.x) + abs(q.y - e.y))
+                if abs(p.x - e.x) + abs(p.y - e.y) > 6:
+                    continue
+                pool.remove(p)
+                vx, vy = (e.x - p.x) / dt, (e.y - p.y) / dt
+                ox, oy = old.get(p.id, (0.0, 0.0))
+                vel[e.id] = (0.6 * vx + 0.4 * ox, 0.6 * vy + 0.4 * oy)
+        self.memory["enemy_vel"] = vel
+
     def observe(self, game):
+        self.track_enemies(game)
+        self.memory["fire_gap"] = self.min_fire_gap
         prev = self.prev
         if prev and prev.my_base_hp is not None and game.my_base_hp is not None and game.my_base_hp < prev.my_base_hp:
             self.memory["my_base_hit"] = game.now
@@ -838,8 +972,9 @@ class Commander:
             stale = game.now - tm["sent_at"] > self.refresh_s
             had_plan = tank.busy or (tank.busy is None and tm["sent_at"] > -1e9)
             send, out = False, []
+            fires = any(st.get("do") == "fire" for st in dec.steps)
             if dec.urgent:
-                send = game.now - tm["fire_at"] >= self.min_fire_gap
+                send = not fires or game.now - tm["fire_at"] >= self.min_fire_gap
             elif dec.steps and (changed or idle or stale):
                 send = True
             elif not dec.steps and changed and tm["job"] and had_plan:
@@ -857,8 +992,9 @@ class Commander:
                     out.append({"tank": tid, **st})
                     budget -= 1
                 tm.update(job=dec.job, sent_at=game.now)
-                if dec.urgent:
+                if fires:
                     tm["fire_at"] = game.now
+                    self.memory.setdefault("fire_at", {})[tid] = game.now
             steps += out
             report[tid] = {"job": dec.job, "sent": send, "steps": [o for o in out if o["do"] != "stop"], "note": dec.note}
 

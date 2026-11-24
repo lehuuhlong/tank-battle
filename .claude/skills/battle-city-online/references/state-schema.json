@@ -15,19 +15,57 @@
   "map": null,
   "my_side": null,
   "tank_fields": {
-    "id": null, "x": null, "y": null, "pos": null, "dir": null, "lives": null,
-    "stars": null, "order": null, "shield": null, "alive": null, "side": null, "mine": null
+    "id": null,
+    "x": null,
+    "y": null,
+    "pos": null,
+    "dir": null,
+    "lives": null,
+    "stars": null,
+    "order": null,
+    "shield": null,
+    "alive": null,
+    "side": null,
+    "mine": null
   },
-  "item_fields": {"kind": null, "x": null, "y": null, "pos": null},
-  "event_fields": {"type": null, "tank": null},
-
-  "legend": {".": "empty", "#": "brick", "@": "steel", "%": "tree", "~": "water", "-": "ice", " ": "empty"},
+  "item_fields": {
+    "kind": null,
+    "x": null,
+    "y": null,
+    "pos": null
+  },
+  "event_fields": {
+    "type": null,
+    "tank": null
+  },
+  "legend": {
+    ".": "empty",
+    "#": "brick",
+    "@": "steel",
+    "%": "tree",
+    "~": "water",
+    "-": "ice",
+    " ": "empty",
+    "1": "empty",
+    "2": "empty",
+    "3": "empty",
+    "4": "empty",
+    "O": "empty",
+    "H": "empty",
+    "T": "empty",
+    "P": "empty"
+  },
   "unknown_char_as": "empty",
   "tank_size": 2,
-  "base_pos": {"top": [20, 0], "bottom": [20, 40]},
-  "enemy_half": {"bottom_max_y": 19, "top_min_y": 21},
+  "enemy_half": {
+    "bottom_max_y": 19,
+    "top_min_y": 21
+  },
   "game_seconds_total": 480,
   "armor_game_seconds": 180,
   "eagle_invulnerable_s": 5.0,
-  "time_unit": "game_seconds"
+  "time_unit": "game_seconds",
+  "_map_overlay": "Bản đồ vẽ đè: 1-4 = xe ta (số hiệu), O = xe địch, H = đại bàng ta, T = đại bàng địch, P = vật phẩm (khối 2x2). Script dùng chúng khi state thiếu trường.",
+  "bullet_cells_per_s": 8.0,
+  "reaction_latency_s": 0.6
 }

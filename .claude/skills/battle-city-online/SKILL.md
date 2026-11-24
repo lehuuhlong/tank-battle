@@ -6,7 +6,9 @@ description: Chơi Battle City Online (tank.recoff.cloud) qua HTTP API tới khi
 # Battle City Online — chỉ huy đội xe tăng
 
 Bạn chỉ huy 4 xe tăng. Mục tiêu: **thắng trận**, bằng một trong bốn cách: phá 5 máu đại bàng địch, đạt 20000 điểm trước, làm địch hết mạng, hoặc hơn điểm khi hết giờ.
-Việc điều khiển từng nhịp do `bco.py run` lo (chạy nền, nhanh, không tốn suy nghĩ). Việc của bạn:
+Việc điều khiển từng nhịp do `bco.py run` lo: chạy nền, mỗi 0,5 giây làm một lượt gồm lấy state + bản đồ, tính quyết định (khoảng 40 ms),
+rồi gửi một `/plan`. Nhịp tự giãn ra khi gặp `429`. Mỗi nhịp, các xe phản xạ trước khi làm việc của vai: bắn ngay khi địch thẳng hàng,
+bắn đón khi địch sắp cắt ngang làn, né khi bị nhắm mà chưa bắn trả được. Việc của bạn:
 - chuẩn bị trước trận;
 - dịch chiến thuật của người dùng thành kế hoạch;
 - **giám sát tới hết trận** và chỉnh khi cần.
@@ -53,6 +55,8 @@ Dữ liệu từng trận nằm trong `./bco-data/<CODE>/`: match.json, rules.js
   - `~` nước (xe không qua, đạn bay qua);
   - `%` bụi cây (đi được, dùng để nấp);
   - `-` băng.
+- Bản đồ vẽ đè các khối 2×2: `11`-`44` là xe ta (chữ số là số xe), `OO` xe địch, `HH` nhà ta, `TT` nhà địch, `PP` vật phẩm.
+  Script tự đọc các ký hiệu này khi state thiếu trường, và đoán bên của ta từ vị trí `HH`.
 - Thẳng hàng để bắn: cùng cột khi `|Δx| ≤ 1`, cùng hàng khi `|Δy| ≤ 1`. Giữa hai bên không được có thép, xe ta, hay **đại bàng ta**.
 - Muốn phá nhà phải đứng ở nửa sân địch (bên dưới: `y ≤ 19`; bên trên: `y ≥ 21`). Đánh vào hông thường dễ hơn đánh chính diện.
 

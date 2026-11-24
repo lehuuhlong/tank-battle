@@ -296,6 +296,7 @@ def cmd_run(a):
 
     control = os.path.join(mdir, "control.json")
     ctl_mtime, paused, errors, waiting_logged = None, False, 0, False
+    interval, seen429, last429 = a.interval, 0, -1e9  # adaptive pace: slow down on 429, recover after 10s
     deadline = time.time() + a.max_minutes * 60
     while time.time() < deadline:
         t0 = time.time()
@@ -342,8 +343,14 @@ def cmd_run(a):
             time.sleep(1)
             continue
         if paused:
-            time.sleep(a.interval)
+            time.sleep(interval)
             continue
+        if client.n429 > seen429:
+            seen429, last429 = client.n429, time.time()
+            interval = min(2.0, interval * 1.5)
+            print(f"# 429 — giãn nhịp lên {interval:.2f}s", flush=True)
+        elif interval > a.interval and time.time() - last429 > 10:
+            interval = max(a.interval, interval / 1.25)
         report, rejected = cmd.step(game)
         if not a.quiet:
             print(summary_line(game, report, rejected, cmd.memory), flush=True)
@@ -351,7 +358,7 @@ def cmd_run(a):
             for tid, r in report.items():
                 print(f"  T{tid}: {r}")
             break
-        time.sleep(max(0.05, a.interval - (time.time() - t0)))
+        time.sleep(max(0.02, interval - (time.time() - t0)))
 
 
 def cmd_watch(a):
@@ -437,7 +444,7 @@ def main():
     p = sub.add_parser("run"); p.add_argument("code", nargs="?")
     p.add_argument("--strategy", default="adaptive"); p.add_argument("--plan", help="file plan.json → chiến thuật scripted")
     p.add_argument("--param", action="append", default=[]); p.add_argument("--side", choices=["top", "bottom"])
-    p.add_argument("--interval", type=float, default=0.8); p.add_argument("--refresh", type=float, default=4.0)
+    p.add_argument("--interval", type=float, default=0.5, help="giây/nhịp (server 0,5s); tự giãn khi gặp 429"); p.add_argument("--refresh", type=float, default=4.0)
     p.add_argument("--dry-run", action="store_true"); p.add_argument("--once", action="store_true")
     p.add_argument("--max-minutes", type=float, default=40); p.add_argument("--quiet", action="store_true")
     p.add_argument("--separate-stop", action="store_true", help="gọi POST /stop riêng thay vì đặt stop đầu /plan")

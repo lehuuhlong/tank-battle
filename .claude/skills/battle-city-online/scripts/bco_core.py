@@ -40,6 +40,7 @@ class Client:
         self.model = model or os.environ.get("BCO_AGENT_MODEL")
         self.timeout = timeout
         self.retries = retries
+        self.n429 = 0  # the runner watches this to slow its loop down
 
     # -- low level -------------------------------------------------------
     def request(self, method, path, body=None, params=None):
@@ -62,6 +63,7 @@ class Client:
             except urllib.error.HTTPError as e:
                 payload = _decode(e.read())
                 if e.code == 429:  # rate limited: back off and retry
+                    self.n429 += 1
                     last = ApiError(e.code, payload, url)
                     retry_after = e.headers.get("Retry-After") if e.headers else None
                     time.sleep(float(retry_after) if retry_after and retry_after.replace(".", "").isdigit() else 1.0 * (attempt + 1))
@@ -158,7 +160,9 @@ BULLET_THROUGH = {"empty", "tree", "ice", "water", "eagle"}
 
 class Grid:
     def __init__(self, rows, legend=None, unknown_as="empty"):
-        legend = legend or {".": "empty", "#": "brick", "@": "steel", "%": "tree", "~": "water", "-": "ice", " ": "empty"}
+        legend = dict(legend or {".": "empty", "#": "brick", "@": "steel", "%": "tree", "~": "water", "-": "ice", " ": "empty"})
+        for ch in OVERLAY_CHARS:  # tanks / eagles / items drawn on the map sit on passable ground
+            legend.setdefault(ch, "empty")
         self.rows = list(rows)
         self.H, self.W = len(rows), max(len(r) for r in rows)
         self.unknown_chars = set()
@@ -636,16 +640,50 @@ def detect_side(match_info):
 
 
 # ---------------------------------------------------------------- main entry
+OVERLAY_CHARS = "123456789OHTP"
+
+
+def map_entities(rows, s=2):
+    """Read what the ASCII map draws on top of terrain (player-relative):
+    digits = our tanks (digit = tank number), O = enemy tank, H = our eagle (home), T = enemy eagle
+    (target), P = power-up. Returns anchors (top-left cell of each 2x2 block)."""
+    seen = set()
+    out = {"mine": [], "enemy": [], "my_base": None, "enemy_base": None, "items": []}
+    for y, row in enumerate(rows):
+        for x, ch in enumerate(row):
+            if ch not in OVERLAY_CHARS or (x, y) in seen:
+                continue
+            for j in range(s):
+                for i in range(s):
+                    if y + j < len(rows) and x + i < len(rows[y + j]) and rows[y + j][x + i] == ch:
+                        seen.add((x + i, y + j))
+            if ch.isdigit():
+                out["mine"].append((int(ch), x, y))
+            elif ch == "O":
+                out["enemy"].append((x, y))
+            elif ch == "H":
+                out["my_base"] = out["my_base"] or (x, y)
+            elif ch == "T":
+                out["enemy_base"] = out["enemy_base"] or (x, y)
+            elif ch == "P":
+                out["items"].append((x, y))
+    return out
+
+
 def normalize(state, my_side=None, schema=None):
     schema = schema if schema is not None else load_schema()
     found, warnings = {}, []
     if not my_side:
         side_v, _ = resolve(state, "my_side", schema, found=found)
         my_side = parse_side(side_v if not isinstance(side_v, dict) else side_v.get("side"))
+    rows = find_map_rows(state, schema, found)
+    s = int(schema.get("tank_size", 2))
+    ents = map_entities(rows, s) if rows else None
+    if my_side not in ("top", "bottom") and ents and ents["my_base"]:
+        my_side = "bottom" if ents["my_base"][1] >= len(rows) // 2 else "top"  # H = our eagle
     if my_side not in ("top", "bottom"):
         raise ValueError("Không xác định được bên (top/bottom). Truyền --side hoặc điền my_side trong state-schema.json")
 
-    rows = find_map_rows(state, schema, found)
     if not rows:
         warnings.append("Không thấy bản đồ ASCII trong state (gọi state?map=true).")
         rows = ["." * 42] * 42
@@ -653,7 +691,6 @@ def normalize(state, my_side=None, schema=None):
     if grid.unknown_chars:
         warnings.append(f"Ký tự bản đồ chưa có trong legend: {sorted(grid.unknown_chars)} (đang coi là {schema.get('unknown_char_as', 'empty')})")
 
-    s = int(schema.get("tank_size", 2))
     tf = {k: v for k, v in (schema.get("tank_fields") or {}).items() if v}
 
     def parse_tanks(lst):
@@ -704,6 +741,12 @@ def normalize(state, my_side=None, schema=None):
                 my_raw, en_raw = mine, theirs
                 found.setdefault("my_tanks", "tanks[mine/side]")
     my_tanks, enemy_tanks = parse_tanks(my_raw if isinstance(my_raw, list) else []), parse_tanks(en_raw if isinstance(en_raw, list) else [])
+    if not my_tanks and ents and ents["mine"]:
+        my_tanks = [Tank(id=i, x=x, y=y) for i, x, y in sorted(ents["mine"])]
+        found.setdefault("my_tanks", "map[1-4]")
+    if not enemy_tanks and ents and ents["enemy"]:
+        enemy_tanks = [Tank(id=k + 1, x=x, y=y) for k, (x, y) in enumerate(ents["enemy"])]
+        found.setdefault("enemy_tanks", "map[O]")
     if not my_tanks:
         warnings.append("Không tìm thấy xe của ta — điền my_tanks/tank_fields trong state-schema.json.")
 
@@ -740,6 +783,9 @@ def normalize(state, my_side=None, schema=None):
             if pos:
                 items.append(Item(kind=str(pick(d, ITEM_FIELDS["kind"], ifm.get("kind")) or "?").lower(), x=pos[0], y=pos[1]))
 
+    if not items and ents:
+        items = [Item(kind="?", x=x, y=y) for x, y in ents["items"]]
+
     events, _ = resolve(state, "events", schema, my_side, found)
 
     # eagle positions: state first (30 maps exist), then schema base_pos, then bottom/top centre
@@ -751,8 +797,10 @@ def normalize(state, my_side=None, schema=None):
         v, _ = resolve(state, key, schema, my_side, found)
         return parse_pos(v, {}) if isinstance(v, dict) else (tuple(v[:2]) if isinstance(v, list) and len(v) >= 2 and all(isinstance(c, int) for c in v[:2]) else None)
 
-    my_base = base_from_state("my_base_pos") or tuple(bp.get(my_side) or default_base[my_side])
-    enemy_base = base_from_state("enemy_base_pos") or tuple(bp.get(OPPOSITE[my_side]) or default_base[OPPOSITE[my_side]])
+    my_base = (base_from_state("my_base_pos") or (ents or {}).get("my_base")
+               or tuple(bp.get(my_side) or default_base[my_side]))
+    enemy_base = (base_from_state("enemy_base_pos") or (ents or {}).get("enemy_base")
+                  or tuple(bp.get(OPPOSITE[my_side]) or default_base[OPPOSITE[my_side]]))
     grid.mark_block(my_base, s, "eagle")
     grid.mark_block(enemy_base, s, "eagle")
     # armor (first 3:00) and the few seconds after each hit: the wall ring around the eagle is

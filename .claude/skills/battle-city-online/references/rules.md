@@ -50,6 +50,11 @@ còn nhiều mạng → xe ở lâu hơn trong nửa sân đối phương → b�
 `.` trống (đi được) · `#` gạch (bắn vỡ) · `@` thép (chỉ 3 sao bắn vỡ) · `~` nước (xe không qua, đạn bay qua) ·
 `%` bụi cây (không chặn gì, để nấp) · `-` băng (xe bị trượt).
 
+Bản đồ ASCII còn **vẽ đè các khối 2×2** (nhìn từ phía bạn):
+`11` `22` `33` `44` = xe ta (chữ số = số xe) · `OO` = xe địch · `HH` = đại bàng ta (home) · `TT` = đại bàng địch (target) ·
+`PP` = vật phẩm. Script coi ô dưới chúng là đất trống, và dùng chúng để lấy vị trí xe/nhà/vật phẩm khi state thiếu trường,
+cũng như đoán bên (HH ở nửa dưới → `bottom`).
+
 ## Vật phẩm
 Mỗi 20s một **cặp** ở hai vị trí đối xứng, tồn tại 15s, chạy đè lên là nhặt.
 ⭐ sao (1: đạn nhanh · 2: hai viên · 3: bắn thủng thép) · ⛑️ mũ: khiên 10s · ⛏️ xẻng: tường quanh nhà mình thành thép 20s · 🛡️ xe tăng: +1 mạng.
@@ -97,7 +102,13 @@ nửa sân nhà, nhặt đồ gần đường, nhà còn 2 máu thì rút hết 
 | `<vai>+collect` | Có vật phẩm trong tầm (chi phí đường ≤ 15) thì ghé nhặt, xong làm `<vai>`. |
 | `hold` | Đứng yên (vẫn bắn cơ hội). |
 
-Mọi vai (trừ `stage`) trước tiên kiểm tra **bắn cơ hội**: xe địch đang nằm thẳng làn, không gạch, ≤18 ô (`fire_range`) → bắn ngay.
+## Phản xạ (mọi vai, mỗi nhịp 0,5s, trước việc của vai)
+1. **Bắn ngay**: xe địch thẳng làn, không gạch, ≤18 ô (`fire_range`), không có khiên → huỷ việc, bắn.
+2. **Bắn đón**: xe địch đang chạy cắt ngang một làn của ta, ≤14 ô → bắn vào chỗ nó sẽ tới
+   (vận tốc ước lượng từ các nhịp trước; `bullet_cells_per_s`, `reaction_latency_s` trong state-schema.json).
+3. **Né**: bị xe địch nhắm (thẳng làn, không vật chắn, nòng hướng vào ta hoặc ở gần ≤6 ô) mà chưa bắn được
+   (vừa bắn, giãn cách 0,6s) → `stop` rồi dạt ngang ra ô trống gần nhất không nằm trong làn địch nào.
+   Bị kẹp hai bên không né được → bắn trả ngay.
 Đang giáp, vai vây (`siege*`, `rush`) tự chuyển sang `stage`, trừ xe ⭐3.
 Tìm đường né các làn bắn hiện tại của xe địch (`danger_penalty` trong schema, 0 để tắt).
 

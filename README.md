@@ -1,7 +1,8 @@
 # tank-battle — Agent + skill cho Battle City Online
 
 Agent và skill cho Claude Code để chơi [Battle City Online](http://tank.recoff.cloud) qua HTTP API, chỉ huy 4 xe tăng tới hết trận.
-Script viết bằng Python, chỉ dùng thư viện chuẩn. Có sẵn tìm đường cho xe 2×2, bắn khi thẳng hàng, và 8 chiến thuật có thể đổi giữa trận.
+Script viết bằng Python, chỉ dùng thư viện chuẩn. Vòng điều khiển chạy mỗi 0,5 giây: lấy state và bản đồ, rồi gửi một `/plan` cho cả đội.
+Có sẵn tìm đường cho xe 2×2, phản xạ (bắn ngay, bắn đón, né đạn), và 8 chiến thuật có thể đổi giữa trận.
 
 ```
 .claude/agents/bco-commander.md                 subagent chỉ huy trận
