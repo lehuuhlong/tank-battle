@@ -89,13 +89,15 @@ nửa sân nhà, nhặt đồ gần đường, nhà còn 2 máu thì rút hết 
 | Căn cứ | `bases.yours` / `bases.opponent`: `x`, `y`, `alive`, `hp`, `invulnerable` (5 giây sau khi trúng), `steel_walls_s` (tường thép còn bao lâu: giáp, sau khi trúng, xẻng) |
 | Vật phẩm | `powerups[]`: `id`, `type` (`tank`, …), `x`, `y`, `expires_in_s` |
 | Nhịp lệnh | `round`, `next_round_in_s` |
-| Khác | `npcs[]`, `bullets[]` (`[{x,y,…}]` đạn đang bay — runner né theo đạn thật khi có hướng bay), `note` |
+| Đạn đang bay | `bullets[]`: chỉ có `x`, `y` (**không có hướng bay**). Runner tự suy hướng: so với vị trí ở nhịp trước (đạn bay thẳng), hoặc đạn mới nằm ngay trước nòng xe nào thì bay theo hướng nòng xe đó (và biết là đạn ta hay đạn địch) |
+| Khác | `npcs[]`, `note` |
 | Bản đồ | `map` (mảng 42 chuỗi) + `map_legend` |
 | Sự kiện mới | `events[]`: `seq`, `type`, `time_left_s`, … — đã thấy `order_completed` (`tank`, `order`, `reason`, `steps_left`), `powerup_spawned` (`id`, `powerup`, `x`, `y`), `match_finished` (`outcome`, `reason`, `your_score`, `opponent_score`) |
 
 Ký hiệu bản đồ theo `map_legend`: `1 2` xe bạn (theo số) · `O` xe đối thủ · `N` xe NPC · `H` nhà bạn · `T` nhà đối thủ ·
 `x` nhà đã bị phá · `P` vật phẩm · `*` viên đạn.
-Chưa thấy mẫu: chi tiết sự kiện `order_failed` (tên trường lý do / ô bị chặn), các trường khác ngoài `x`,`y` của `bullets[]`.
+Sự kiện `order_failed`: lý do **và ô bị chặn** nằm trong chuỗi `reason` (vd `"blocked by steel at (12, 7)"`). Runner đọc ô đó
+(`(x, y)`, `[x, y]`, `x=.. y=..`, `at x,y`), phạt nó 8 giây khi tìm đường và đi vòng.
 
 ## Toán của trận (cấu hình mặc định)
 - Phá nhà: 5 máu × 1000 điểm; 5 phát trúng hợp lệ là **thắng ngay**. Mỗi phát trúng → xe bắn bị đưa về nhà, đại bàng bất tử 5s.

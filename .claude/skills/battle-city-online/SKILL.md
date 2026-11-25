@@ -106,7 +106,7 @@ Lặp: `bco.py watch CODE --seconds 25` → in 1 dòng → xử lý nếu cần 
 ## 7. Xử lý sự kiện (runner tự làm; bạn theo dõi)
 | Sự kiện | Runner tự làm | Bạn làm |
 |---|---|---|
-| Lệnh bị từ chối / `order_failed` | Phạt ô bị chặn 8 giây và tính đường vòng; 3 lần liền thì lùi 1-2 ô ngược hướng ô bị chặn | Nếu lặp lại nhiều: đọc lý do trong `log.jsonl`, sửa schema hoặc legend |
+| Lệnh bị từ chối / `order_failed` (ô bị chặn nằm trong `reason`) | Đọc ô bị chặn từ `reason`, phạt ô đó 8 giây và tính đường vòng; 3 lần liền thì lùi 1-2 ô ngược hướng ô bị chặn | Nếu lặp lại nhiều: đọc lý do trong `log.jsonl`, sửa schema hoặc legend |
 | Địch dựng hàng rào đạn (2 xe quay mặt vào nhau bắn chặn một hàng) | Không đi xuyên làn rào (trừ khi có khiên); `adaptive` cử xe `breaker` đánh xe rào từ phía nó không quay nòng | Muốn phá nhanh: cho 2 xe vai `breaker` trong plan.json |
 | Xe bị hạ rồi hồi sinh, hoặc xe bị đưa về nhà sau khi bắn trúng đại bàng | Giao lại việc | — |
 | Xe địch có đường đạn tới đại bàng ta | Xe ta gần nhất bắn nó hoặc lao vào chắn làn (mọi chiến thuật) | — |

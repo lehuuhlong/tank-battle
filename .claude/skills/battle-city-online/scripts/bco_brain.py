@@ -1,5 +1,6 @@
 """Battle City Online — bộ não: khối chiến thuật (tactics), các chiến thuật (strategies), runner gửi lệnh."""
 import json
+import re
 import os
 import sys
 import time
@@ -85,11 +86,63 @@ def blocked_cell_from(obj):
                 if r:
                     return r
     elif isinstance(obj, str):
-        import re
-        m = re.search(r"\(\s*(\d+)\s*,\s*(\d+)\s*\)", obj)
-        if m:
-            return (int(m.group(1)), int(m.group(2)))
+        # real server: the cell is inside the "reason" text, e.g. "blocked by steel at (12, 7)".
+        # Accept (12, 7) · [12, 7] · x=12 y=7 · at 12,7 — never "move(up, 3)" (not two numbers).
+        for pat in (r"[(\[]\s*(\d+)\s*[,;]\s*(\d+)\s*[)\]]",
+                    r"x\s*[=:]\s*(\d+)\D{1,6}y\s*[=:]\s*(\d+)",
+                    r"(?:at|tại|cell|ô)\s*(\d+)\s*[,; ]\s*(\d+)"):
+            m = re.search(pat, obj, re.I)
+            if m:
+                return (int(m.group(1)), int(m.group(2)))
     return None
+
+
+def infer_bullets(game, prev):
+    """The real state lists bullets with x, y only. Work out each bullet's direction (and whose it is):
+    1) same bullet in the previous state: same row/column, moved ≤ 10 cells → direction of motion;
+    2) new bullet: right in front of a tank's barrel → that tank's facing (and side)."""
+    if not game.bullets:
+        return
+    s = game.tank_size
+    olds = list(prev.bullets) if prev else []
+    tanks = [(t, True) for t in game.alive_tanks(True)] + [(t, False) for t in game.alive_tanks(False)]
+    for b in game.bullets:
+        if b["dir"] and b["mine"] is not None:
+            continue
+        best = None
+        for o in olds:
+            dx, dy = b["x"] - o["x"], b["y"] - o["y"]
+            if abs(dx) < 0.6 and 0.2 < abs(dy) <= 10:
+                d, dist = ("down" if dy > 0 else "up"), abs(dy)
+            elif abs(dy) < 0.6 and 0.2 < abs(dx) <= 10:
+                d, dist = ("right" if dx > 0 else "left"), abs(dx)
+            else:
+                continue
+            if o.get("dir") and o["dir"] != d:
+                continue
+            if best is None or dist < best[0]:
+                best = (dist, d, o)
+        if best:
+            b["dir"] = b["dir"] or best[1]
+            if b["mine"] is None:
+                b["mine"] = best[2].get("mine")
+            continue
+        near = None
+        for t, mine in tanks:
+            if not t.dir:
+                continue
+            dx, dy = DELTA[t.dir]
+            if dy:
+                across, ahead = b["x"] - t.x, (b["y"] - (t.y + (s - 1 if dy > 0 else 0))) * dy
+            else:
+                across, ahead = b["y"] - t.y, (b["x"] - (t.x + (s - 1 if dx > 0 else 0))) * dx
+            if -0.6 <= across <= s - 0.4 and -0.5 <= ahead <= 5:
+                if near is None or ahead < near[0]:
+                    near = (ahead, t.dir, mine)
+        if near:
+            b["dir"] = b["dir"] or near[1]
+            if b["mine"] is None:
+                b["mine"] = near[2]
 
 
 def mark_blocked(memory, cell, now, ttl=8.0):
@@ -1342,6 +1395,7 @@ class Commander:
 
     def observe(self, game):
         self.remember_terrain(game)
+        infer_bullets(game, self.prev)
         self.memory["fences"] = detect_fences(game, self.memory)
         self.track_enemies(game)
         self.memory["fire_gap"] = self.min_fire_gap

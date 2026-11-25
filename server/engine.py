@@ -568,9 +568,9 @@ class Game:
         front = self._front_cells(t, d)
         kinds = [self.grid.at(x, y) for x, y in front]
         if "X" in kinds:
-            return self._fail(t, "ra ngoài bản đồ", front[0])
+            return self._fail(t, f"blocked by the map edge at ({front[0][0]}, {front[0][1]})", front[0])
         if self._eagle_at(nx, ny):
-            return self._fail(t, "bị đại bàng chặn", front[0])
+            return self._fail(t, f"blocked by a base at ({front[0][0]}, {front[0][1]})", front[0])
         blocking = [(c, k) for c, k in zip(front, kinds) if k in "#@~"]
         if blocking:
             cell, k = blocking[0]
@@ -578,13 +578,13 @@ class Game:
                 if t.fire_cooldown <= 0 and not any(b.side == t.side and b.tank_id == t.id for b in self.bullets):
                     self._shoot(t, d)
                 return
-            what = {"#": "gạch", "@": "thép", "~": "nước"}[k]
-            return self._fail(t, f"bị {what} chặn tại ({cell[0]}, {cell[1]})", cell)
+            what = {"#": "brick", "@": "steel", "~": "water"}[k]
+            return self._fail(t, f"blocked by {what} at ({cell[0]}, {cell[1]})", cell)
         if self._occupied_by_tank(nx, ny, t):
             t.blocked_for += dt
             if t.blocked_for >= cfg.blocked_wait_s:
                 t.blocked_for = 0.0
-                self._fail(t, f"bị xe chặn tại ({front[0][0]}, {front[0][1]})", front[0])
+                self._fail(t, f"blocked by a tank at ({front[0][0]}, {front[0][1]})", front[0])
             return
         t.blocked_for = 0.0
         t.moving_to, t.move_progress = (nx, ny), 0.0
@@ -831,7 +831,7 @@ class Game:
         opp = OPP[side]
 
         def ev_out(e):
-            e = {k: v for k, v in e.items() if k not in ("text", "t", "side") or (k == "side" and e.get("type") == "base_attacked")}
+            e = {k: v for k, v in e.items() if k not in ("text", "t", "side", "cell") or (k == "side" and e.get("type") == "base_attacked")}
             if e.get("type") == "match_finished":
                 e = {"type": "match_finished", "outcome": "you_won" if e.get("winner") == side else "you_lost",
                      "reason": e.get("reason_code") or e.get("reason"), "your_score": self.score[side], "opponent_score": self.score[opp]}
@@ -878,8 +878,7 @@ class Game:
             "opponent": {"side": opp, "score": self.score[opp], "tanks": [tank(t, False) for t in self.tanks[opp]]},
             "bases": {"yours": base(side), "opponent": base(opp)},
             "npcs": [],
-            "bullets": [{"x": round(b.x, 2), "y": round(b.y, 2), "facing": b.dir, "owner": "you" if b.side == side else "opponent"}
-                        for b in self.bullets],
+            "bullets": [{"x": round(b.x, 2), "y": round(b.y, 2)} for b in self.bullets],  # real server: no direction
             "powerups": [{"id": i.id, "type": i.kind, "x": i.x, "y": i.y, "expires_in_s": round(i.until - self.t, 1)} for i in self.items],
         }
         if self.status == "finished":
