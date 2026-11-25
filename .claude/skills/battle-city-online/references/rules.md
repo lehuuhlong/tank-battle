@@ -4,24 +4,36 @@ Nguồn: trang hướng dẫn http://tank.recoff.cloud (mục Luật chơi, Chu�
 của server; **luật của chính trận (`GET /matches/{code}/rules`) luôn thắng tài liệu này**.
 Tên từng trường của `state` và từng sự kiện: trang Hướng dẫn trên web, mục **Tài liệu API** — đọc nó khi điền `state-schema.json`.
 
-## Endpoint
+## Endpoint (đã xác minh trên server thật)
 Base `http://tank.recoff.cloud/api/v1` · mọi request: `Authorization: Bearer $BCO_TOKEN` · mã phòng `{code}` 4 ký tự.
+Chỉ những route dưới đây tồn tại; mọi route khác trả `404 {"error":"not found"}`.
 
 | Gọi | Mục đích |
 |---|---|
 | `GET /matches` | Trận của bạn; `playing: true` là trận cần chơi |
 | `GET /matches/{code}` | Bạn ở bên trên/dưới, cấu hình trận. Gửi `X-Agent-Model: <model>`. **Gọi sớm**: nút Sẵn sàng chỉ bấm được khi agent đã gọi API cho phòng |
 | `GET /matches/{code}/rules` | Luật trận này (đọc một lần) |
-| `GET /matches/{code}/state?map=true` | Trạng thái, sự kiện mới, bản đồ ASCII — cách duy nhất theo dõi trận |
+| `GET /matches/{code}/state?map=true` | Trạng thái, sự kiện mới, bản đồ ASCII |
 | `POST /matches/{code}/plan` | `{"steps":[{"tank":1,"do":"..."},...]}` nhiều lệnh một lần |
-| `POST /matches/{code}/orders` | `{"tank":1,"do":"..."}` một lệnh |
-| `POST /matches/{code}/stop` | `{"tank":1}` xoá kế hoạch của xe |
+| `POST /matches/{code}/orders` | `{"tank":N,"do":"..."}` một lệnh |
+| `POST /matches/{code}/stop` | `{"tank":N}` xoá kế hoạch của xe |
 
-Lệnh: `move` (`direction`,`cells`; bị chặn → thất bại kèm lý do và ô bị chặn) · `move_fire` (đi + bắn vỡ gạch, **không bắn xe**) ·
-`turn` (`direction`) · `fire` (`count` 1-3, `direction`) · `stop`. Hướng `up/right/down/left`. Mọi lệnh có `tank` 1-4.
-**Lệnh mới nối cuối kế hoạch; đổi việc thì đặt `{"tank":n,"do":"stop"}` lên đầu** các bước của xe đó. Tối đa 5 bước chờ/xe.
-Server chỉ từ chối xe có lệnh sai, các xe khác vẫn nhận → gửi lại riêng xe bị từ chối.
-`429` = gọi quá nhiều mỗi giây → gộp lệnh vào một `/plan`, không gọi state dồn dập.
+Lệnh `do`: `move` / `move_fire` (`direction`, `cells`) · `turn` (`direction`) · `fire` (`count` 1-3, `direction`) · `stop`.
+**`fire` nhận `direction`**: bắn hướng nào cũng được mà **không cần `turn` trước** (không mất nhịp). Lệnh mới nối cuối kế hoạch;
+đổi việc thì đặt `{"tank":n,"do":"stop"}` lên đầu. Tối đa 5 bước chờ. **Khoá thừa bị từ chối** (`move does not take foo`).
+
+Phản hồi:
+```
+/plan   {"ok":true,"accepted":2,"steps":[{"tank":1,"do":"move","ok":true,"steps_waiting":1}, ...]}
+/orders {"tank":1,"do":"move","ok":true,"steps_waiting":2,"max_steps":5,"applies_in_round":77}
+/stop   {"ok":true,"queued":true,"tank":3,"order":null,"plan":[],"applies_in_s":0.6,"applies_in_round":91}
+```
+Lỗi: `401 missing token…` / `401 unknown player key…` · `404 room ZZZZ does not exist … (your current room is VEQR)` ·
+`409 the match has not started yet…` (chờ) · `409 room VEQR is over (finished)…` (thoát) · `400 unknown step 'up'` (`do` là động từ,
+hướng ở `direction`) · `400 tank is required…` · `400 move does not take foo` · `400 count must be between 1 and 3` · `429` (gọi quá nhiều).
+
+**Nhịp lệnh:** state có `round` và `next_round_in_s`; lệnh gửi đi áp dụng ở nhịp sau (`applies_in_round`). Runner ngủ tới ngay
+sau mốc nhịp kế rồi mới lấy state (dữ liệu mới nhất), và coi xe là "đang có lệnh chờ" cho tới `applies_in_round`.
 
 ## Cấu hình mặc định
 Duel (không NPC) · điều khiển tay · 4 xe/bên · 15 mạng/xe · căn cứ 5 máu, **giáp 3:00 đầu** · tối đa 16 phút thực
@@ -70,19 +82,20 @@ nửa sân nhà, nhặt đồ gần đường, nhà còn 2 máu thì rút hết 
 
 | Thông tin | Trường |
 |---|---|
-| Trạng thái trận | `status` (`finished`, …) · kết quả: `result.outcome` (`you_won`/`you_lost`), `result.reason` (vd `forfeit`) |
+| Trạng thái trận | `status`: `scheduled` / `preparing` / `live` / `finished` · kết quả: `result.outcome` (`you_won`/`you_lost`), `result.reason` (vd `forfeit`) |
 | Thời gian còn lại / giáp còn lại | `time_left_s` / `bases_open_in_s` (giây đồng hồ game) · `score_limit` · `map_size.width/height` |
-| Xe ta | `you.side`, `you.score`, `you.tanks[]`: `tank` (số xe), `x`, `y` (số thực, ô trên-trái), `facing`, `lives`, `stars`, `alive`, `shielded`, `order` (bước đang làm, vd `"fire(3, down)"`, hoặc `null`), `next` (các bước chờ) |
+| Xe ta | `you.side`, `you.score`, `you.tanks[]`: `tank` (số xe), `x`, `y` (số thực, có thể lẻ như `31.5` vì chuyển động liên tục — làm tròn khi tính ô; ô trên-trái), `facing`, `lives`, `stars`, `alive`, `shielded`, `order` (bước đang làm, vd `{"type":"move","direction":"up","cells":1,"status":"active"}`, hoặc `null`), `next` (các bước chờ, vd `["move(up, 1)","fire"]`). Xe chết: `{"tank","alive":false,"lives","respawns_in_s"}` |
 | Xe địch | `opponent.side`, `opponent.score`, `opponent.tanks[]`: như trên nhưng không có `order`/`next` |
 | Căn cứ | `bases.yours` / `bases.opponent`: `x`, `y`, `alive`, `hp`, `invulnerable` (5 giây sau khi trúng), `steel_walls_s` (tường thép còn bao lâu: giáp, sau khi trúng, xẻng) |
 | Vật phẩm | `powerups[]`: `id`, `type` (`tank`, …), `x`, `y`, `expires_in_s` |
-| Khác | `npcs[]`, `bullets[]` (danh sách đạn đang bay), `note` |
+| Nhịp lệnh | `round`, `next_round_in_s` |
+| Khác | `npcs[]`, `bullets[]` (`[{x,y,…}]` đạn đang bay — runner né theo đạn thật khi có hướng bay), `note` |
 | Bản đồ | `map` (mảng 42 chuỗi) + `map_legend` |
 | Sự kiện mới | `events[]`: `seq`, `type`, `time_left_s`, … — đã thấy `order_completed` (`tank`, `order`, `reason`, `steps_left`), `powerup_spawned` (`id`, `powerup`, `x`, `y`), `match_finished` (`outcome`, `reason`, `your_score`, `opponent_score`) |
 
 Ký hiệu bản đồ theo `map_legend`: `1 2` xe bạn (theo số) · `O` xe đối thủ · `N` xe NPC · `H` nhà bạn · `T` nhà đối thủ ·
 `x` nhà đã bị phá · `P` vật phẩm · `*` viên đạn.
-Chưa thấy mẫu: sự kiện lệnh thất bại (tên trường lý do / ô bị chặn), cấu trúc phần tử của `bullets[]`, tên trạng thái khi chưa bắt đầu / đang đấu.
+Chưa thấy mẫu: chi tiết sự kiện `order_failed` (tên trường lý do / ô bị chặn), các trường khác ngoài `x`,`y` của `bullets[]`.
 
 ## Toán của trận (cấu hình mặc định)
 - Phá nhà: 5 máu × 1000 điểm; 5 phát trúng hợp lệ là **thắng ngay**. Mỗi phát trúng → xe bắn bị đưa về nhà, đại bàng bất tử 5s.

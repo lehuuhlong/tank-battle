@@ -320,7 +320,15 @@ def cmd_run(a):
                 print("! control.json lỗi:", e, file=sys.stderr)
         try:
             raw = client.state(code)
+            t_fetch = time.time()
             errors = 0
+        except ApiError as e:
+            if e.status in (401, 404):  # wrong token / old room code: retrying will not help
+                sys.exit(f"Dừng: {e}\n(404 thường kèm mã phòng hiện tại — chạy lại với mã đó)")
+            errors += 1
+            print("! state lỗi:", e, file=sys.stderr)
+            time.sleep(1)
+            continue
         except Exception as e:  # network hiccup: keep going
             errors += 1
             print("! state lỗi:", e, file=sys.stderr)
@@ -358,7 +366,13 @@ def cmd_run(a):
             for tid, r in report.items():
                 print(f"  T{tid}: {r}")
             break
-        time.sleep(max(0.02, interval - (time.time() - t0)))
+        if game.next_round_in_s is not None and interval <= a.interval:
+            # sync with the server's command rounds: fetch the next state just after the next round has
+            # been applied (freshest positions), so the plan we compute lands before the round after
+            wake = t_fetch + game.next_round_in_s + a.round_offset
+            time.sleep(min(max(0.02, wake - time.time()), 1.0))  # missed it → fetch now (still fresh)
+        else:
+            time.sleep(max(0.02, interval - (time.time() - t0)))
 
 
 def cmd_watch(a):
@@ -446,6 +460,7 @@ def main():
     p.add_argument("--param", action="append", default=[]); p.add_argument("--side", choices=["top", "bottom"])
     p.add_argument("--interval", type=float, default=0.5, help="giây/nhịp (server 0,5s); tự giãn khi gặp 429"); p.add_argument("--refresh", type=float, default=4.0)
     p.add_argument("--dry-run", action="store_true"); p.add_argument("--once", action="store_true")
+    p.add_argument("--round-offset", type=float, default=0.06, help="ngủ tới sau nhịp server bao nhiêu giây");
     p.add_argument("--max-minutes", type=float, default=40); p.add_argument("--quiet", action="store_true")
     p.add_argument("--separate-stop", action="store_true", help="gọi POST /stop riêng thay vì đặt stop đầu /plan")
     p.set_defaults(fn=cmd_run)

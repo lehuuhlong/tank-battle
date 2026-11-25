@@ -347,7 +347,7 @@ CANDIDATES = {
     "enemy_base_pos": ["bases.opponent", "enemy.base", "enemy.eagle", "opponent.base", "enemy_base", "bases.{enemy}", "eagles.{enemy}", "base.{enemy}", "eagle.{enemy}", "{enemy}.base", "{enemy}.eagle"],
 }
 LIVE_STATUSES = {"live", "playing", "running", "in_progress", "started", "active"}
-WAIT_STATUSES = {"scheduled", "waiting", "pending", "lobby", "ready", "countdown", "starting"}
+WAIT_STATUSES = {"scheduled", "preparing", "waiting", "pending", "lobby", "ready", "countdown", "starting"}
 TANK_FIELDS = {
     "id": ["id", "tank", "tank_id", "index", "n", "no"],
     "x": ["x", "col", "cx"], "y": ["y", "row", "cy"],
@@ -530,6 +530,9 @@ class Game:
     my_score: int = None
     enemy_score: int = None
     events: list = field(default_factory=list)
+    round: int = None                # command round counter (real server: "round")
+    next_round_in_s: float = None    # real seconds until the next command round
+    bullets: list = field(default_factory=list)  # [{"x", "y", "dir", "mine"}] bullets in flight
     items: list = field(default_factory=list)
     my_base: tuple = None
     enemy_base: tuple = None
@@ -678,6 +681,28 @@ def map_entities(rows, s=2):
                 out["enemy_base"] = out["enemy_base"] or (x, y)
             elif ch == "P":
                 out["items"].append((x, y))
+    return out
+
+
+def parse_bullets(lst, my_side):
+    """bullets[] from the state: keep position, direction and owner when the server gives them."""
+    out = []
+    for b in lst or []:
+        if not isinstance(b, dict) or b.get("x") is None or b.get("y") is None:
+            continue
+        d = parse_dir(pick(b, ["facing", "dir", "direction", "heading"]))
+        owner = pick(b, ["owner", "side", "team", "from", "by", "mine"])
+        mine = None
+        if isinstance(owner, bool):
+            mine = owner
+        elif owner is not None:
+            o = str(owner).lower()
+            mine = True if o in ("you", "yours", "mine", "me", "ally", my_side) else \
+                False if o in ("opponent", "enemy", "them", "npc", OPPOSITE.get(my_side, "")) else None
+        try:
+            out.append({"x": float(b["x"]), "y": float(b["y"]), "dir": d, "mine": mine})
+        except (TypeError, ValueError):
+            pass
     return out
 
 
@@ -841,6 +866,9 @@ def normalize(state, my_side=None, schema=None):
         my_base_hp=num("my_base_hp"), enemy_base_hp=num("enemy_base_hp"),
         my_score=num("my_score"), enemy_score=num("enemy_score"),
         events=events if isinstance(events, list) else [], items=items,
+        round=state.get("round") if isinstance(state.get("round"), int) else None,
+        next_round_in_s=parse_seconds(state.get("next_round_in_s")),
+        bullets=parse_bullets(state.get("bullets"), my_side),
         my_base=my_base, enemy_base=enemy_base, tank_size=s,
         enemy_base_open=base_open("enemy_base_info"), my_base_open=base_open("my_base_info"),
         enemy_half_bound=schema.get("enemy_half") or {"bottom_max_y": (H - s) // 2 - 1, "top_min_y": (H - s) // 2 + 1},

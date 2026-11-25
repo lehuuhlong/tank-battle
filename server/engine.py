@@ -308,6 +308,7 @@ class Game:
         self.events = []                            # (seq, t, side_or_None, dict)
         self.seq = 0
         self.item_seq = 0
+        self.round = 0
         self.friendly_fire = []                     # own-eagle hits, for diagnosis
         self.ring = {s: self._ring_cells(s) for s in ("top", "bottom")}
         self._set_ring("top", "@")
@@ -367,46 +368,59 @@ class Game:
         return f"Xe {t.id} {SIDE_VI[t.side]}"
 
     # ------------------------------------------------------------ orders
+    ALLOWED_KEYS = {"move": {"tank", "do", "direction", "cells"}, "move_fire": {"tank", "do", "direction", "cells"},
+                    "turn": {"tank", "do", "direction"}, "fire": {"tank", "do", "count", "direction"}, "stop": {"tank", "do"}}
+
+    def check_step(self, st):
+        """Validate one step like the real server. Returns an error message or None."""
+        if not isinstance(st, dict):
+            return "each step must be an object"
+        if st.get("tank") is None:
+            return f"tank is required (1-{self.cfg.tanks})"
+        do = st.get("do")
+        if do not in self.ALLOWED_KEYS:
+            return f"unknown step '{do}'"
+        extra = sorted(set(st) - self.ALLOWED_KEYS[do])
+        if extra:
+            return f"{do} does not take {extra[0]}"
+        if do in ("move", "move_fire", "turn") and st.get("direction") not in DIRS:
+            return f"{do} needs direction up/right/down/left"
+        if do == "fire" and st.get("direction") is not None and st.get("direction") not in DIRS:
+            return "direction must be up/right/down/left"
+        if do in ("move", "move_fire") and not (isinstance(st.get("cells", 1), int) and 1 <= st.get("cells", 1) <= 41):
+            return "cells must be between 1 and 41"
+        if do == "fire" and not (isinstance(st.get("count", 1), int) and 1 <= st.get("count", 1) <= 3):
+            return "count must be between 1 and 3"
+        return None
+
     def submit(self, side, steps):
-        """Validate orders. Returns per-tank results; valid ones are queued for the next command tick.
-        A wrong order rejects only that tank's steps."""
+        """Queue orders for the next command round. Real-server behaviour: a wrong order rejects only that
+        tank's steps, the other tanks are accepted. Returns one result per step."""
         by_tank, results = {}, []
         for st in steps:
-            by_tank.setdefault(st.get("tank"), []).append(st)
+            by_tank.setdefault(st.get("tank") if isinstance(st, dict) else None, []).append(st)
         for tid, sts in by_tank.items():
-            t = self.tank(side, tid) if isinstance(tid, int) else None
-            err = None
-            if t is None:
-                err = f"tank phải là số 1-{self.cfg.tanks}"
-            elif t.out:
-                err = f"Xe {tid} đã hết mạng"
-            else:
-                for st in sts:
-                    do, d = st.get("do"), st.get("direction")
-                    if do not in ("move", "move_fire", "turn", "fire", "stop"):
-                        err = f"lệnh '{do}' không hợp lệ (move, move_fire, turn, fire, stop)"
-                    elif do in ("move", "move_fire", "turn") and d not in DIRS:
-                        err = f"{do} cần direction up/right/down/left"
-                    elif do == "fire" and d is not None and d not in DIRS:
-                        err = "fire: direction phải là up/right/down/left"
-                    elif do in ("move", "move_fire") and not (isinstance(st.get("cells", 1), int) and 1 <= st.get("cells", 1) <= 41):
-                        err = "cells phải là số nguyên 1-41"
-                    elif do == "fire" and not (isinstance(st.get("count", 1), int) and 1 <= st.get("count", 1) <= 3):
-                        err = "count phải là 1-3"
-                    if err:
-                        break
-                if not err:
-                    queued = list(t.plan)
-                    for st in [p for p in self.pending[side] if p["tank"] == tid] + sts:
-                        queued = [] if st["do"] == "stop" else queued + [st]
-                    if len(queued) > self.cfg.max_queue:
-                        err = f"quá {self.cfg.max_queue} bước chờ (hiện có {len(t.plan)}) — gửi stop trước để đổi việc"
+            err = next((e for e in map(self.check_step, sts) if e), None)
+            t = self.tank(side, tid) if isinstance(tid, int) and not err else None
+            if not err and t is None:
+                err = f"tank must be 1-{self.cfg.tanks}"
+            elif not err and t.out:
+                err = f"tank {tid} has no lives left"
+            if not err:
+                queued = list(t.plan)
+                for st in [p for p in self.pending[side] if p["tank"] == tid] + sts:
+                    queued = [] if st["do"] == "stop" else queued + [st]
+                if len(queued) > self.cfg.max_queue:
+                    err = f"too many steps waiting: max {self.cfg.max_queue} (tank {tid} has {len(t.plan)}); send stop first"
             if err:
-                results.append({"tank": tid, "ok": False, "error": err})
-            else:
-                for st in sts:
-                    self.pending[side].append({k: v for k, v in st.items() if k in ("tank", "do", "direction", "cells", "count")})
-                results.append({"tank": tid, "ok": True, "queued": len(sts)})
+                results += [{"tank": tid, "do": st.get("do") if isinstance(st, dict) else None, "ok": False, "error": err} for st in sts]
+                continue
+            waiting = len(t.plan) + sum(1 for p in self.pending[side] if p["tank"] == tid)
+            for st in sts:
+                self.pending[side].append(dict(st))
+                waiting = 0 if st["do"] == "stop" else waiting + 1
+                results.append({"tank": tid, "do": st["do"], "ok": True, "steps_waiting": waiting,
+                                "applies_in_round": self.round + 1})
         return results
 
     def _apply_pending(self):
@@ -434,6 +448,7 @@ class Game:
         cfg = self.cfg
         if self.t >= self.next_tick_at:
             self.next_tick_at += cfg.tick_s
+            self.round += 1
             self._apply_pending()
         if not self.armor_over and self.armor_left <= 0:
             self.armor_over = True
@@ -831,8 +846,12 @@ class Game:
             px = t.x + (t.moving_to[0] - t.x) * t.move_progress if t.moving_to else t.x
             py = t.y + (t.moving_to[1] - t.y) * t.move_progress if t.moving_to else t.y
             d = {"tank": t.id, "alive": t.alive, "lives": t.lives}
+            if not t.alive:  # real server: a dead tank only has respawns_in_s
+                if t.lives > 0:
+                    d["respawns_in_s"] = round(max(0.0, t.dead_until - self.t) / self.cfg.time_scale, 1)
+                return d
             if mine:
-                d["order"] = order_str(t.plan[0]) if t.plan else None
+                d["order"] = order_obj(t.plan[0]) if t.plan else None
                 d["next"] = [order_str(p) for p in t.plan[1:]]
             d.update({"x": round(float(px), 2), "y": round(float(py), 2), "facing": t.dir, "stars": t.stars,
                       "shielded": t.alive and self.t < t.shield_until})
@@ -852,6 +871,8 @@ class Game:
             "time_left_s": round(self.time_left),
             "bases_open_in_s": round(self.armor_left),
             "score_limit": self.cfg.score_target,
+            "round": self.round,
+            "next_round_in_s": round(max(0.0, self.next_tick_at - self.t) / self.cfg.time_scale, 2),
             "map_size": {"width": self.grid.w, "height": self.grid.h},
             "you": {"side": side, "score": self.score[side], "tanks": [tank(t, True) for t in self.tanks[side]]},
             "opponent": {"side": opp, "score": self.score[opp], "tanks": [tank(t, False) for t in self.tanks[opp]]},
@@ -1085,6 +1106,19 @@ def now():
 MAP_LEGEND = (". empty   # brick (destructible)   @ steel (only a 3-star tank breaks it)   ~ water (tanks cannot cross, bullets can)"
               "   % bush (hides tanks)   - ice (slippery)   1 2 your tanks (by number)   O opponent tank   N NPC tank   H your base"
               "   T opponent base   x destroyed base   P power-up   * bullet")
+
+
+def order_obj(st):
+    """Current order as the real server shows it: {"type", "direction", "cells", "status": "active"}."""
+    d = {"type": st.get("do")}
+    if st.get("direction"):
+        d["direction"] = st["direction"]
+    if st.get("do") in ("move", "move_fire"):
+        d["cells"] = st.get("_cells_left", st.get("cells", 1))
+    if st.get("do") == "fire":
+        d["count"] = st.get("count", 1)
+    d["status"] = "active"
+    return d
 
 
 def order_str(st):

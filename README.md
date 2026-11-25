@@ -193,7 +193,8 @@ Chạy trên server này đã bắt được và sửa các lỗi: tự bắn tr
 lệnh bị từ chối vì hàng chờ bị dồn đôi.
 
 ### Khác biệt có thể có so với server thật
-`GET /state` trả **đúng định dạng của server thật** (theo JSON mẫu từ tank.recoff.cloud). Các phần còn đoán, chỉnh được trong
-`server/engine.py` (lớp `Config` và hàm `state_for`): định dạng sự kiện lệnh thất bại và phản hồi `/plan`, cấu trúc `bullets[]`, tốc độ xe (3 ô/s) và đạn (9 ô/s, 1 sao 13,5 ô/s), cách xe xử lý khi bị xe khác chắn
+API, state, phản hồi `/plan` / `/orders` / `/stop`, thông báo lỗi và trạng thái (`scheduled` / `preparing` / `live` / `finished`)
+làm **theo đặc tả và JSON mẫu của server thật**. Các phần còn đoán, chỉnh được trong `server/engine.py` (lớp `Config` và hàm
+`state_for`): chi tiết sự kiện `order_failed`, các trường của `bullets[]` ngoài `x`,`y`, tốc độ xe (3 ô/s) và đạn (9 ô/s, 1 sao 13,5 ô/s), cách xe xử lý khi bị xe khác chắn
 (chờ 1 giây rồi báo lỗi), hiệu ứng băng, vị trí xuất hiện vật phẩm, giới hạn 15 lần gọi/giây, và 28 bản đồ còn lại.
 

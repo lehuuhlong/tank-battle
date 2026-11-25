@@ -112,6 +112,11 @@ class Room:
             return "countdown"
         return self.game.status
 
+    @property
+    def api_status(self):
+        """Statuses as the real API names them: scheduled / preparing / live / finished."""
+        return "preparing" if self.countdown_until else self.game.status
+
     def meta(self, viewer=None):
         g = self.game
         return {
@@ -239,7 +244,7 @@ class Handler(BaseHTTPRequestHandler):
             if method == "GET" and path in ("/", "/index.html") or path.startswith("/room/"):
                 with open(os.path.join(HERE, "static", "index.html"), "rb") as f:
                     return self._send(200, f.read(), "text/html")
-            return self._send(404, {"error": "không tìm thấy"})
+            return self._send(404, {"error": "not found"})
         except ValueError as e:
             return self._send(400, {"error": str(e)})
 
@@ -247,7 +252,10 @@ class Handler(BaseHTTPRequestHandler):
     def _api(self, method, path, qs):
         user = self._user()
         if not user:
-            return self._send(401, {"error": "Thiếu hoặc sai token. Gửi header Authorization: Bearer $BCO_TOKEN"})
+            auth = self.headers.get("Authorization", "")
+            if not auth.lower().startswith("bearer ") or not auth[7:].strip():
+                return self._send(401, {"error": "missing token: send Authorization: Bearer <your token>"})
+            return self._send(401, {"error": "unknown player key: check BCO_TOKEN (or create a new token in Cài đặt agent)"})
         now = time.time()
         q = RATE.setdefault(user, deque())
         while q and now - q[0] > 1.0:
@@ -263,20 +271,21 @@ class Handler(BaseHTTPRequestHandler):
                 for r in ROOMS.values():
                     side = r.side_of(user)
                     if side:
-                        mine.append({"code": r.code, "name": r.name, "status": r.status, "side": side,
+                        mine.append({"code": r.code, "name": r.name, "status": r.api_status, "side": side,
                                      "playing": r.status in ("scheduled", "countdown", "live"),
                                      "opponent": r.players[OPP[side]], "map": r.game.map_name})
                 return self._send(200, {"matches": mine})
             m = re.fullmatch(r"/matches/([A-Za-z0-9]+)(/[a-z]+)?", path)
             if not m:
-                return self._send(404, {"error": f"Không có endpoint {method} {path}"})
+                return self._send(404, {"error": "not found"})
             code, sub = m.group(1).upper(), (m.group(2) or "")
             room = ROOMS.get(code)
             side = room.side_of(user) if room else None
             if not side:
                 yours = [r.code for r in ROOMS.values() if r.side_of(user) and r.status != "finished"]
-                return self._send(404, {"error": f"Phòng {code} không tồn tại hoặc bạn không ở trong phòng này",
-                                        "your_rooms": yours, "current_room": yours[0] if yours else None})
+                cur = f"your current room is {yours[0]}" if yours else "you are not in any room right now"
+                return self._send(404, {"error": f"room {code} does not exist or you are not in it ({cur})",
+                                        "your_rooms": yours})
             room.agent_seen[side] = True
             if self.headers.get("X-Agent-Model"):
                 room.agent_model[side] = self.headers.get("X-Agent-Model")[:60]
@@ -289,7 +298,7 @@ class Handler(BaseHTTPRequestHandler):
     def _match_api(self, method, sub, room, side, user, body, qs):
         g = room.game
         if method == "GET" and sub == "":
-            return self._send(200, {"code": room.code, "status": room.status, "map": g.map_name,
+            return self._send(200, {"code": room.code, "status": room.api_status, "map": g.map_name,
                                     "you": {"name": user, "side": side, "color": SIDE_VI[side]},
                                     "opponent": {"name": room.players[OPP[side]], "side": OPP[side], "is_bot": bool(room.bot_level),
                                                  "level": room.bot_level},
@@ -304,26 +313,41 @@ class Handler(BaseHTTPRequestHandler):
             if g.status == "finished":
                 st["note"] = f"room {room.code} is over (finished): it takes no more orders"
             if room.status == "countdown":
-                st["status"] = "scheduled"
-                st["starts_in"] = round(room.countdown_until - time.time(), 1)
+                st["status"] = "preparing"
+                st["starts_in_s"] = round(room.countdown_until - time.time(), 1)
             return self._send(200, st)
         if method == "POST" and sub in ("/plan", "/orders", "/stop"):
+            if g.status == "finished":
+                return self._send(409, {"error": f"room {room.code} is over (finished): it takes no more orders"})
             if g.status != "live":
-                return self._send(409, {"error": f"Trận chưa bắt đầu hoặc đã kết thúc (status={room.status})", "status": room.status})
+                return self._send(409, {"error": f"the match has not started yet (status={'preparing' if room.status == 'countdown' else room.status}): wait, don't send orders"})
+            applies_in_s = round(max(0.0, g.next_tick_at - g.t) / g.cfg.time_scale, 2)
             if sub == "/plan":
                 steps = (body or {}).get("steps")
                 if not isinstance(steps, list) or not steps:
-                    return self._send(400, {"error": 'Body phải là {"steps": [{"tank": 1, "do": "...", ...}, ...]}'})
+                    return self._send(400, {"error": 'body must be {"steps": [{"tank": 1, "do": "...", ...}, ...]}'})
                 res = g.submit(side, steps)
-            elif sub == "/orders":
-                res = g.submit(side, [body or {}])
-            else:
-                res = g.submit(side, [{"tank": (body or {}).get("tank"), "do": "stop"}])
-            rejected = {str(r["tank"]): r["error"] for r in res if not r["ok"]}
-            payload = {"results": res, "accepted": [r["tank"] for r in res if r["ok"]], "rejected": rejected,
-                       "applies_at_next_tick": True}
-            return self._send(200 if sub == "/plan" or not rejected else 422, payload)
-        return self._send(404, {"error": f"Không có endpoint {method} /matches/{room.code}{sub}"})
+                ok = [r for r in res if r["ok"]]
+                return self._send(200, {"ok": bool(ok), "accepted": len(ok), "steps": res,
+                                        "applies_in_round": g.round + 1, "applies_in_s": applies_in_s})
+            if sub == "/orders":
+                err = g.check_step(body or {})
+                if err:
+                    return self._send(400, {"error": err})
+                r = g.submit(side, [body])[0]
+                if not r["ok"]:
+                    return self._send(400, {"error": r["error"]})
+                return self._send(200, {"tank": r["tank"], "do": r["do"], "ok": True, "steps_waiting": r["steps_waiting"],
+                                        "max_steps": g.cfg.max_queue, "applies_in_round": g.round + 1})
+            tid = (body or {}).get("tank")
+            if tid is None:
+                return self._send(400, {"error": f"tank is required (1-{g.cfg.tanks})"})
+            r = g.submit(side, [{"tank": tid, "do": "stop"}])[0]
+            if not r["ok"]:
+                return self._send(400, {"error": r["error"]})
+            return self._send(200, {"ok": True, "queued": True, "tank": tid, "order": None, "plan": [],
+                                    "applies_in_s": applies_in_s, "applies_in_round": g.round + 1})
+        return self._send(404, {"error": "not found"})
 
     # --- web UI endpoints
     def _web(self, method, path, qs):

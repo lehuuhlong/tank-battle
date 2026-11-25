@@ -113,6 +113,9 @@ Lặp: `bco.py watch CODE --seconds 25` → in 1 dòng → xử lý nếu cần 
 | Địch đánh từ hai hông | Mỗi xe thủ nhận một kẻ địch khác nhau; `adaptive` đặt `guard_left` + `guard_right`, các xe còn lại vẫn công | Dùng `scripted`: cho 2 xe `guard_left`/`guard_right`; dặn ưu tiên nhặt xẻng ⛏️ |
 | Nhà ta bị bắn | Vai `defend` mở rộng vùng chặn trong 8 giây | `watch` báo "NHÀ TA MẤT MÁU": cân nhắc thêm vai `defend` hoặc `guard_front` |
 | `429` (gọi API quá nhiều) | Client tự chờ rồi gửi lại | Vẫn bị: tăng `--interval` |
+| `404 room … (your current room is XXXX)` | Runner dừng và in thông báo | Chạy lại `bco.py run` với mã phòng hiện tại `XXXX` |
+| `409 the match has not started yet` / trạng thái `scheduled`, `preparing` | Runner tự chờ, không ra lệnh | Nhắc người dùng bấm Sẵn sàng |
+| `409 room … is over (finished)` | Runner thấy `finished` và dừng | Sang mục 8 |
 
 ## 8. Khi trận kết thúc
 Báo cho người dùng: thắng hay thua, điểm, máu nhà hai bên, các chiến thuật đã dùng và đã đổi, lỗi hoặc chỗ xe kẹt đáng chú ý.

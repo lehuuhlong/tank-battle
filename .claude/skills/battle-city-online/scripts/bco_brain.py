@@ -289,10 +289,40 @@ def lead_fire(game, tank, memory, max_range=14):
     return None
 
 
+class _Src:
+    def __init__(self, id):
+        self.id = id
+
+
 def threats_to(game, tank, rng=16):
-    """Enemies that can hit `tank` right now: straight lane, nothing but air between, facing it
-    (or close enough to turn and shoot within a tick). Returns [(dist, enemy, dir_from_enemy)]."""
+    """What can hit `tank` right now. Returns [(dist, source, dir, in_lane(x, y))] sorted by distance:
+    - enemy tanks in a straight lane with nothing solid between, facing it (or ≤6 cells: can turn);
+    - bullets already flying at it (state.bullets with a direction, not ours, nothing solid between)."""
     s, out = game.tank_size, []
+    for b in game.bullets:
+        if b["mine"] is True or not b["dir"]:
+            continue
+        dx, dy = DELTA[b["dir"]]
+        bx, by = b["x"], b["y"]
+        if dy:
+            if not (tank.x - 0.5 <= bx <= tank.x + s - 0.5):
+                continue
+            dist = (tank.y - by) * dy
+        else:
+            if not (tank.y - 0.5 <= by <= tank.y + s - 0.5):
+                continue
+            dist = (tank.x - bx) * dx
+        if dist < -1 or dist > 12:
+            continue
+        cx, cy, blocked = int(round(bx)), int(round(by)), False
+        for _ in range(max(0, int(dist) - 1)):
+            cx, cy = cx + dx, cy + dy
+            if game.grid.at(cx, cy) in ("brick", "steel", "wall", "item_cell"):
+                blocked = True
+                break
+        if not blocked:
+            lane = (lambda x, y, bx=bx: x - 0.5 <= bx <= x + s - 0.5) if dy else (lambda x, y, by=by: y - 0.5 <= by <= y + s - 0.5)
+            out.append((max(0.0, dist), _Src("đạn"), b["dir"], lane))
     for e in game.alive_tanks(False):
         if abs(e.x - tank.x) < s:
             d = "down" if tank.y > e.y else "up"
@@ -309,7 +339,8 @@ def threats_to(game, tank, rng=16):
         ents += [("base", game.my_base, None), ("base", game.enemy_base, None)]
         hit = trace(game.grid, e.pos, d, s, ents, star3(e), rng + 2)
         if hit["kind"] == "mine" and hit["obj"] is tank and hit["bricks"] == 0:
-            out.append((dist, e, d))
+            lane = (lambda x, y, e=e: abs(e.x - x) < s) if d in ("up", "down") else (lambda x, y, e=e: abs(e.y - y) < s)
+            out.append((dist, e, d, lane))
     return sorted(out, key=lambda t: t[0])
 
 
@@ -330,7 +361,7 @@ def dodge(game, tank, memory):
             ec = game.grid.enter_cost(x, y, s)
             if ec is None or ec[1] or any(abs(o.x - x) < s and abs(o.y - y) < s for o in others):
                 break  # blocked (brick needs shooting: too slow for a dodge)
-            if any((abs(e.x - x) < s) if d in ("up", "down") else (abs(e.y - y) < s) for _, e, d in threats):
+            if any(in_lane(x, y) for _, _, _, in_lane in threats):
                 continue  # still in a threatening lane: keep sliding
             score = n + 3 * danger.get((x, y), 0)
             if best is None or score < best[0]:
@@ -340,7 +371,7 @@ def dodge(game, tank, memory):
         return None
     _, dd, n = best
     return Decision(job=f"dodge:{dd}{n}@{tank.x},{tank.y}", steps=[{"do": "move", "direction": dd, "cells": n}],
-                    note=f"né xe địch {threats[0][1].id}")
+                    note=f"né {threats[0][1].id}" if isinstance(threats[0][1], _Src) else f"né xe địch {threats[0][1].id}")
 
 
 def reflex(game, tank, memory, max_bricks=0, max_range=18, allow_base=False, dodge_ok=True):
@@ -1266,7 +1297,8 @@ class Commander:
         self.client, self.code, self.strategy = client, code, strategy
         self.dry_run, self.refresh_s, self.min_fire_gap = dry_run, refresh_s, min_fire_gap
         self.inline_stop = inline_stop
-        self.pending_window_s = 1.2   # tick 0.5s + network; overridable
+        self.pending_window_s = 1.2   # tick 0.5s + network; overridable (used when the state has no "round")
+        self.pending_round = {}       # tank -> round at which our last orders apply (from the /plan reply)
         self.last_response = None
         self.memory = {}          # team memory shared by strategies (eagle timing, caches...)
         self.tanks = {}           # per tank: job, sent_at, fire_at, rejects, pos
@@ -1360,13 +1392,12 @@ class Commander:
             stale = game.now - tm["sent_at"] > self.refresh_s
             # orders apply at the next 0.5s tick, so right after a send the state can still show the tank
             # idle: treat it as busy for a moment, or a new plan would be appended to the pending one
-            had_plan = (tank.busy or (tank.busy is None and tm["sent_at"] > -1e9)
-                        or game.now - tm["sent_at"] < self.pending_window_s)
+            had_plan = tank.busy or (tank.busy is None and tm["sent_at"] > -1e9) or self.pending(game, tid, tm)
             send, out = False, []
             fires = any(st.get("do") == "fire" for st in dec.steps)
             if dec.urgent:
                 send = not fires or game.now - tm["fire_at"] >= self.min_fire_gap
-            elif dec.steps and (changed or (idle and game.now - tm["sent_at"] >= self.pending_window_s) or stale):
+            elif dec.steps and (changed or (idle and not self.pending(game, tid, tm)) or stale):
                 send = True
             elif not dec.steps and changed and tm["job"] and had_plan:
                 out = [{"tank": tid, "do": "stop"}]   # switching to "hold": clear the old plan
@@ -1403,6 +1434,27 @@ class Commander:
         self._log(game, report, stopped, rejected)
         return report, rejected
 
+    def pending(self, game, tid, tm):
+        """Orders sent but not applied yet? Use rounds when the server gives them, else a time window."""
+        if game.round is not None and tid in self.pending_round:
+            return game.round < self.pending_round[tid]
+        return game.now - tm["sent_at"] < self.pending_window_s
+
+    def _note_rounds(self, resp, sent):
+        """Real /plan reply: {"ok", "accepted", "steps": [{"tank", "ok", "steps_waiting", "applies_in_round"?}]},
+        sometimes a top-level "applies_in_round"."""
+        if not isinstance(resp, dict):
+            return
+        top = resp.get("applies_in_round")
+        per = {}
+        for st in resp.get("steps") or []:
+            if isinstance(st, dict) and st.get("ok") is not False and st.get("tank") is not None:
+                per[st["tank"]] = st.get("applies_in_round", top)
+        for tid in sent:
+            r = per.get(tid, top)
+            if isinstance(r, int):
+                self.pending_round[tid] = r
+
     def _send(self, steps):
         sent = sorted({s["tank"] for s in steps}, key=str)
         try:
@@ -1410,6 +1462,7 @@ class Commander:
         except ApiError as e:
             resp = e.body
         self.last_response = resp
+        self._note_rounds(resp, sent)
         rejected = find_rejections(resp, sent) if resp else {}
         # The server rejects only the faulty tank: resend that tank alone, stop + first real step.
         for tid in list(rejected):
