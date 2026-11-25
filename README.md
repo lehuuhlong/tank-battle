@@ -13,6 +13,10 @@ Có sẵn tìm đường cho xe 2×2, phản xạ (bắn ngay, bắn đón, né 
   scripts/bco.py                                CLI: info, rules, state, probe, analyze, run, watch, plan, order, stop
   scripts/bco_core.py                           HTTP client, bản đồ, tìm đường, đường đạn, chuẩn hoá state
   scripts/bco_brain.py                          tactics, các chiến thuật, runner gửi lệnh
+server/                                         server luyện tập tự dựng (xem mục cuối)
+  app.py                                        HTTP API giống server thật + web + phòng + bot
+  engine.py                                     engine mô phỏng luật game, bản đồ, bot Dễ/Vừa/Khó
+  static/index.html                             giao diện web
 ```
 
 ## Cài đặt
@@ -130,3 +134,57 @@ Tên các trường trong `state` chưa được điền sẵn; script đang t�
 3. điền vào `references/state-schema.json`.
 
 Chỉ cần làm một lần.
+
+## Server luyện tập (tự dựng)
+Trong giải đấu, phòng luyện tập trên server thật bị đóng. Thư mục `server/` là một bản mô phỏng chạy trên máy bạn: cùng HTTP API
+(`/api/v1/matches/...`), cùng luật trong trang hướng dẫn, có bot Dễ/Vừa/Khó, có giao diện web để xem trận. Agent và skill chơi ở đây
+không cần sửa gì, chỉ cần đổi địa chỉ API.
+
+**Đây không phải engine chính thức.** Những gì tài liệu không nói rõ (tên trường của state, định dạng phản hồi, tốc độ xe/đạn, 30 bản đồ…)
+được làm theo cách hợp lý nhất; xem "Khác biệt có thể có" bên dưới.
+
+### Chạy
+Cần Python 3.9+, không cài thêm gì.
+```powershell
+python server\app.py
+```
+Mở http://localhost:8080, nhập tên để đăng nhập. Muốn đồng đội trong mạng LAN vào cùng (đấu người với người):
+```powershell
+python server\app.py --host 0.0.0.0 --port 8080
+```
+Đồng đội mở `http://<IP máy bạn>:8080`.
+
+### Chơi thử một trận
+1. **Tạo phòng**: chọn Bot Dễ/Vừa/Khó, hoặc "Người" rồi đồng đội bấm Join. Muốn test nhanh: chọn **Tua nhanh ×4**, hoặc giảm thời gian trận / giáp.
+2. Trong phòng bấm **Cài đặt agent**: copy lệnh đặt biến môi trường (có `BCO_TOKEN` và `BCO_BASE_URL` trỏ về server này) vào terminal sẽ mở Claude Code.
+3. Gõ prompt có mã phòng như bình thường. Khi agent gọi API, chấm "agent" sáng xanh → bấm **Sẵn sàng** → trận bắt đầu sau 5 giây.
+4. Xem trận trực tiếp; **Nhật ký agent** cho thấy mọi lần agent gọi API. Hết trận có bảng kết quả: số xe hạ, bị hạ, vật phẩm,
+   số lần trúng nhà địch, **số lần bắn trúng nhà mình**, và **số giây đứng không việc** của từng xe. Chủ phòng bấm **Đấu lại**.
+
+Chạy thẳng runner của skill, không qua Claude Code:
+```powershell
+$env:BCO_BASE_URL = "http://localhost:8080/api/v1"
+```
+```powershell
+python .claude\skills\battle-city-online\scripts\bco.py run ABCD --strategy adaptive
+```
+
+### Có gì
+- **API:** `GET /matches`, `GET /matches/{code}` (nhận `X-Agent-Model`), `/rules`, `/state?map=true`, `POST /plan` / `/orders` / `/stop`.
+  Lệnh sai chỉ từ chối xe đó. Trận chưa bắt đầu trả `409`. Quá 15 lần gọi/giây trả `429`. Sai mã phòng thì báo kèm mã phòng hiện tại.
+- **Luật:** xe 2×2; lệnh hai bên áp dụng cùng lúc ở đầu nhịp 0,5 giây; tối đa 5 bước chờ; giáp 3:00 (tường quanh đại bàng là thép, xe 3 sao bắn vỡ);
+  chỉ mất máu khi bị bắn từ nửa sân của căn cứ đó; trúng đại bàng địch thì xe bị đưa về nhà; đại bàng bất tử 5 giây; hồi sinh 3 giây có khiên;
+  vật phẩm theo cặp đối xứng mỗi 20 giây (⭐ ⛑️ ⛏️ 🛡️, có thể nằm trên gạch); đạn gặp nhau triệt tiêu; đạn trúng gì tính nấy, kể cả nhà mình;
+  4 điều kiện thắng và chuỗi xét khi bằng điểm như tài liệu.
+- **Bản đồ ASCII** vẽ đè như server thật: `1-4` xe bạn, `O` xe địch, `H` nhà bạn, `T` nhà địch, `P` vật phẩm.
+- **Bản đồ:** 2 bản đồ thật (`san-1`, `san-2`) + bản đồ ngẫu nhiên đối xứng 180°.
+- **Bot:** Dễ (cả đội giữ nhà, nghĩ 4 giây), Vừa (nửa công nửa thủ, 2 giây), Khó (như Vừa + đánh xe gặp trên đường, chặn mọi xe vào sân nhà,
+  nhặt đồ gần đường, nhà còn 2 máu thì rút về thủ, 0,1 giây). Bot ra lệnh qua đúng các lệnh `move` / `move_fire` / `turn` / `fire` / `stop`.
+- **Cấu hình phòng** (chủ phòng, trước trận): tua nhanh, thời gian trận, giáp, số xe, số mạng, máu căn cứ, mốc điểm, tốc độ xe/đạn, bản đồ.
+  Tài khoản và token lưu ở `server/data/users.json` (đã nằm trong `.gitignore`).
+
+### Khác biệt có thể có so với server thật
+Các con số và tên trường dưới đây là đoán, chỉnh được trong `server/engine.py` (lớp `Config` và hàm `state_for`):
+tên trường JSON của `state` và sự kiện, định dạng phản hồi `/plan`, tốc độ xe (3 ô/s) và đạn (9 ô/s, 1 sao 13,5 ô/s), cách xe xử lý khi bị xe khác chắn
+(chờ 1 giây rồi báo lỗi), hiệu ứng băng, vị trí xuất hiện vật phẩm, giới hạn 15 lần gọi/giây, và 28 bản đồ còn lại.
+

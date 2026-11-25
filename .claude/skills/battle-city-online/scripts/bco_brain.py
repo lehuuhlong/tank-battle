@@ -161,6 +161,15 @@ def penalties_for(game, tank, memory=None):
     if danger_w:
         for a, n in danger_lanes(game).items():
             pen[a] = danger_w * n
+    # our eagle's wall: never shoot our own protection open with move_fire (only if no other way)
+    bx, by = game.my_base
+    for cy in range(by - 1, by + s + 1):
+        for cx in range(bx - 1, bx + s + 1):
+            if game.grid.at(cx, cy) in ("brick", "steel", "item_cell") and not (bx <= cx < bx + s and by <= cy < by + s):
+                for dx in range(s):
+                    for dy in range(s):
+                        a = (cx - dx, cy - dy)
+                        pen[a] = pen.get(a, 0) + 80
     if not tank.shield:
         for f in memory.get("fences") or []:
             for a in f["lane"]:
@@ -209,12 +218,20 @@ def shot_at(game, tank, d, max_range=60):
     return trace(game.grid, tank.pos, d, game.tank_size, entities_for(game, tank), star3(tank), max_range)
 
 
+def own_eagle_in_line(game, pos, d, pierce=False):
+    """Would a bullet fired from `pos` towards `d` reach OUR eagle if it misses (target moves away or
+    dies)? Bullets hit whatever they meet, own base included → never fire such a shot at a tank."""
+    hit = trace(game.grid, pos, d, game.tank_size, [("my_base", game.my_base, None)], pierce, 60)
+    return hit["kind"] == "my_base" and hit["bricks"] <= 2
+
+
 def opportunistic_fire(game, tank, memory, max_bricks=0, max_range=18, allow_base=True):
     """Shoot an enemy tank (or the enemy eagle when it counts) already in a straight lane."""
     best = None
     for d in DIRS:
         hit = shot_at(game, tank, d, max_range)
-        if hit["kind"] == "enemy" and hit["bricks"] <= max_bricks and not hit["obj"].shield:
+        if hit["kind"] == "enemy" and hit["bricks"] <= max_bricks and not hit["obj"].shield \
+                and not own_eagle_in_line(game, tank.pos, d, star3(tank)):
             score = 100 - hit["dist"]
             if best is None or score > best[0]:
                 best = (score, d, hit["bricks"] + 1 + (1 if hit["dist"] > 10 else 0), f"bắn xe địch {hit['obj'].id}")
@@ -262,7 +279,8 @@ def lead_fire(game, tank, memory, max_range=14):
                 continue  # it cannot get there (wall/water)
             ents = [(k, (px, py) if o is e else a, o) for k, a, o in entities_for(game, tank)]
             hit = trace(game.grid, tank.pos, d, s, ents, star3(tank), max_range + 2)
-            if hit["kind"] == "enemy" and hit["obj"] is e and hit["bricks"] == 0:
+            if hit["kind"] == "enemy" and hit["obj"] is e and hit["bricks"] == 0 \
+                    and not own_eagle_in_line(game, tank.pos, d, star3(tank)):
                 return Decision(job=f"lead:{d}", steps=[fire_step(d, 2)], urgent=True, note=f"bắn đón xe địch {e.id}")
     return None
 
@@ -374,6 +392,8 @@ def firing_spots(game, tank, target_anchor, target_kind, memory, max_bricks=1, n
             continue
         if hit["bricks"] > max_bricks or hit["dist"] < min_dist:
             continue
+        if target_kind == "enemy" and own_eagle_in_line(game, (x, y), d, star3(tank)):
+            continue  # a miss would fly on into our own eagle
         out.append((cost + 2 * hit["bricks"], (x, y), d, hit["bricks"]))
         if len(out) >= max_candidates:
             break
@@ -542,7 +562,8 @@ def guard_eagle(game, tank, memory, th):
     d = direction_between(tank.pos, e.pos, game.tank_size)
     if d:
         hit = shot_at(game, tank, d)
-        if hit["kind"] == "enemy" and hit["obj"] is e and hit["bricks"] <= 1 and can_fire(game, tank, memory):
+        if hit["kind"] == "enemy" and hit["obj"] is e and hit["bricks"] <= 1 and can_fire(game, tank, memory) \
+                and not own_eagle_in_line(game, tank.pos, d, star3(tank)):
             return 0, Decision(job=f"save_fire:{e.id}", steps=[fire_step(d, hit["bricks"] + 2)], urgent=True,
                                note=f"cứu nhà: bắn xe địch {e.id}")
     dist, prev = paths_from(game, tank, memory)

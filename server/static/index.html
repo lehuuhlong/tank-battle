@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Battle City Online — Luyện tập</title>
+<style>
+  :root {
+    --bg: #0f1218; --panel: #171c25; --panel2: #1e2430; --line: #2a3242; --text: #e6e9ef; --muted: #8b93a5;
+    --gold: #f2c14e; --blue: #4fb3e8; --green: #3ecf6e; --red: #ef5b5b; --accent: #f2c14e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--blue); }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+           padding: 7px 12px; border-radius: 8px; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #1a1a1a; border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  input, select { font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+                  border-radius: 8px; padding: 7px 10px; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .5px; }
+  header .sp { flex: 1; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .muted { color: var(--muted); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .hidden { display: none !important; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--panel2); border: 1px solid var(--line); }
+  .badge.live { background: var(--red); border-color: var(--red); color: #fff; }
+  .badge.armor { color: #9fd3ff; border-color: #3b6c8f; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #555; margin-right: 4px; vertical-align: middle; }
+  .dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  /* room */
+  .topbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .clock { font: 600 22px ui-monospace, Menlo, Consolas, monospace; }
+  .cfgline { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  .arena { display: grid; grid-template-columns: 260px auto 260px; gap: 14px; align-items: start; }
+  .side { padding: 12px; }
+  .side h3 { margin: 0 0 4px; font-size: 15px; }
+  .side.bottom h3 { color: var(--gold); } .side.top h3 { color: var(--blue); }
+  .tankrow { display: grid; grid-template-columns: 46px 1fr; gap: 2px 6px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
+  .tankrow b { font-size: 12px; }
+  .tankrow .doing { grid-column: 2; color: var(--muted); font-size: 12px; }
+  .tankrow.dead { opacity: .45; }
+  .hp { display: flex; gap: 3px; margin: 8px 0; } .hp i { flex: 1; height: 8px; border-radius: 2px; background: #3a1d1d; }
+  .hp i.on { background: var(--red); }
+  .stats { display: flex; gap: 10px; font-size: 12px; color: var(--muted); margin: 6px 0 2px; }
+  canvas { display: block; border-radius: 8px; background: #000; max-width: 100%; image-rendering: pixelated; }
+  .feed { margin-top: 12px; max-height: 190px; overflow: auto; font-size: 13px; }
+  .feed div { padding: 3px 0; border-bottom: 1px dashed var(--line); }
+  .feed .t { color: var(--muted); font-family: ui-monospace, monospace; margin-right: 6px; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
+  .modal .card { max-width: 760px; width: 100%; max-height: 86vh; overflow: auto; }
+  pre, code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; }
+  pre { background: #0b0e13; border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+  .result { text-align: center; }
+  .result h2 { margin: 4px 0 6px; font-size: 26px; }
+  label.f { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  .formgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+  .formgrid input, .formgrid select { width: 100%; min-width: 0; }
+  @media (max-width: 1000px) { .arena { grid-template-columns: 1fr; } .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛡️ BATTLE CITY ONLINE <span class="muted" style="font-weight:400">· luyện tập</span></h1>
+  <span class="sp"></span>
+  <span id="who" class="muted"></span>
+  <button id="btnLobby" class="hidden">Sảnh</button>
+  <button id="btnAgentTop" class="hidden">Cài đặt agent</button>
+  <button id="btnLogout" class="hidden">Đăng xuất</button>
+</header>
+
+<!-- LOGIN -->
+<div id="vLogin" class="wrap hidden">
+  <div class="card" style="max-width:420px;margin:40px auto">
+    <h2 style="margin-top:0">Đăng nhập</h2>
+    <p class="muted">Server luyện tập cục bộ: nhập tên là vào (tạo tài khoản nếu chưa có). Mỗi tài khoản có một token riêng cho agent.</p>
+    <div class="row"><input id="loginName" placeholder="Tên của bạn" style="flex:1"><button class="primary" id="btnLogin">Vào</button></div>
+    <p id="loginErr" class="muted"></p>
+  </div>
+</div>
+
+<!-- LOBBY -->
+<div id="vLobby" class="wrap hidden">
+  <div class="grid2">
+    <div class="card">
+      <h3 style="margin-top:0">Tạo phòng</h3>
+      <div class="formgrid">
+        <label class="f">Tên phòng<input id="cName" placeholder="(tuỳ chọn)"></label>
+        <label class="f">Đối thủ
+          <select id="cBot"><option value="">Người (chờ người vào)</option><option value="easy">Bot Dễ</option>
+          <option value="medium" selected>Bot Vừa</option><option value="hard">Bot Khó</option></select></label>
+        <label class="f">Bản đồ<select id="cMap"></select></label>
+        <label class="f">Tua nhanh<select id="cScale"><option value="1">×1 (như thật)</option><option value="2">×2</option><option value="4">×4</option></select></label>
+        <label class="f">Thời gian trận (giây game)<input id="cGame" type="number" value="480"></label>
+        <label class="f">Giáp đầu trận (giây game)<input id="cArmor" type="number" value="180"></label>
+        <label class="f">Số xe mỗi bên<input id="cTanks" type="number" value="4" min="1" max="4"></label>
+        <label class="f">Mạng mỗi xe<input id="cLives" type="number" value="15"></label>
+      </div>
+      <p class="muted" style="font-size:12px">Mặc định giống server thật: 8:00 đồng hồ game = 16 phút thực, giáp 3:00. Muốn test nhanh: tua ×4, hoặc giảm thời gian / giáp.</p>
+      <button class="primary" id="btnCreate">Tạo phòng</button>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Các phòng</h3>
+      <table><thead><tr><th>Mã</th><th>Phòng</th><th>Người chơi</th><th>Trạng thái</th><th></th></tr></thead><tbody id="roomList"></tbody></table>
+    </div>
+  </div>
+</div>
+
+<!-- ROOM -->
+<div id="vRoom" class="wrap hidden">
+  <div class="topbar">
+    <span class="clock" id="rCode"></span>
+    <span class="badge" id="rStatus"></span>
+    <span class="clock" id="rClock">08:00</span>
+    <span class="badge armor" id="rArmor"></span>
+    <span class="sp" style="flex:1"></span>
+    <button id="btnReady" class="primary">Sẵn sàng</button>
+    <button id="btnAgent">Cài đặt agent</button>
+    <button id="btnLog">Nhật ký agent</button>
+    <button id="btnSettings" class="hidden">Cấu hình</button>
+    <button id="btnLeave">Rời phòng</button>
+  </div>
+  <div class="cfgline" id="rCfg"></div>
+  <div class="arena">
+    <div class="card side bottom" id="sideBottom"></div>
+    <div>
+      <canvas id="cv" width="672" height="672"></canvas>
+      <div class="card feed" id="feed"></div>
+    </div>
+    <div class="card side top" id="sideTop"></div>
+  </div>
+</div>
+
+<!-- MODALS -->
+<div id="mAgent" class="modal hidden"><div class="card">
+  <div class="row"><h3 style="margin:0;flex:1">Cài đặt agent</h3><button data-close>Đóng</button></div>
+  <p class="muted">Giống hộp "Cài đặt agent" của server thật. Ai có token là điều khiển được xe của bạn.</p>
+  <table>
+    <tr><th>Địa chỉ API</th><td><code id="aApi"></code></td></tr>
+    <tr><th>Mã phòng</th><td><code id="aCode"></code></td></tr>
+    <tr><th>Token</th><td><code id="aToken"></code> <button id="btnCopyTok">Copy</button> <button id="btnNewTok">Tạo token mới</button></td></tr>
+  </table>
+  <p><b>Đặt biến môi trường</b> (PowerShell) rồi mở Claude Code:</p>
+  <pre id="aPs"></pre>
+  <p><b>Git Bash / Linux / macOS:</b></p>
+  <pre id="aSh"></pre>
+  <p><b>Prompt mẫu:</b></p>
+  <pre id="aPrompt"></pre>
+</div></div>
+
+<div id="mLog" class="modal hidden"><div class="card" style="max-width:1000px">
+  <div class="row"><h3 style="margin:0;flex:1">Nhật ký agent (chỉ bạn xem)</h3><button data-close>Đóng</button></div>
+  <table><thead><tr><th>Giờ</th><th>Gọi</th><th>Mã</th><th>Gửi</th><th>Nhận</th></tr></thead><tbody id="logBody"></tbody></table>
+</div></div>
+
+<div id="mSettings" class="modal hidden"><div class="card">
+  <div class="row"><h3 style="margin:0;flex:1">Cấu hình phòng (trước khi đấu)</h3><button data-close>Đóng</button></div>
+  <div class="formgrid" id="setForm"></div>
+  <p><button class="primary" id="btnSaveCfg">Lưu cấu hình (tạo lại bản đồ)</button></p>
+</div></div>
+
+<div id="mResult" class="modal hidden"><div class="card result">
+  <div class="muted">HẾT TRẬN</div>
+  <h2 id="resTitle"></h2>
+  <div id="resReason" class="muted"></div>
+  <div id="resTable" style="margin:14px 0;text-align:left"></div>
+  <div class="row" style="justify-content:center">
+    <button class="primary" id="btnRematch">Đấu lại</button>
+    <button data-close>Xem bản đồ</button>
+    <button id="btnResLobby">Về sảnh</button>
+  </div>
+</div></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const SIDE_VI = { bottom: "vàng", top: "xanh" };
+const ITEM = { star: "⭐", helmet: "⛑️", shovel: "⛏️", tank: "🛡️" };
+const CFG_LABEL = { time_scale: "Tua nhanh", game_seconds: "Thời gian trận (giây game)", armor_game_seconds: "Giáp (giây game)",
+  lives: "Mạng mỗi xe", tanks: "Số xe", base_hp: "Máu căn cứ", score_target: "Mốc điểm", tank_cells_per_s: "Tốc độ xe (ô/s)",
+  bullet_cells_per_s: "Tốc độ đạn (ô/s)", map: "Bản đồ" };
+let token = localStorage.getItem("bco_token"), me = localStorage.getItem("bco_name");
+let roomCode = null, lastView = null, pollTimer = null, resultShown = false, maps = ["random"];
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { method: opts.method || "GET", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+                                body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+function show(id) { for (const v of ["vLogin", "vLobby", "vRoom"]) $("#" + v).classList.toggle("hidden", v !== id);
+  const logged = !!token; for (const b of ["btnLogout", "btnLobby"]) $("#" + b).classList.toggle("hidden", !logged || id === "vLogin");
+  $("#who").textContent = logged ? "👤 " + me : ""; }
+function fmt(s) { s = Math.max(0, Math.ceil(s)); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); }
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => b.closest(".modal").classList.add("hidden"));
+
+// ---------------- routing
+function route() {
+  clearInterval(pollTimer);
+  if (!token) return show("vLogin");
+  const m = location.hash.match(/^#\/room\/([A-Z0-9]+)/i);
+  if (m) { roomCode = m[1].toUpperCase(); show("vRoom"); resultShown = false; pollRoom(); }
+  else { roomCode = null; show("vLobby"); loadLobby(); pollTimer = setInterval(loadLobby, 2000); }
+}
+window.onhashchange = route;
+$("#btnLobby").onclick = () => location.hash = "";
+$("#btnLogout").onclick = () => { localStorage.clear(); token = me = null; location.hash = ""; route(); };
+$("#btnLogin").onclick = async () => {
+  try { const j = await api("/web/login", { method: "POST", body: { name: $("#loginName").value } });
+        token = j.token; me = j.name; localStorage.setItem("bco_token", token); localStorage.setItem("bco_name", me); route(); }
+  catch (e) { $("#loginErr").textContent = e.message; }
+};
+$("#loginName").onkeydown = e => { if (e.key === "Enter") $("#btnLogin").click(); };
+
+// ---------------- lobby
+async function loadLobby() {
+  try {
+    const j = await api("/web/rooms");
+    if (JSON.stringify(maps) !== JSON.stringify(j.maps)) { maps = j.maps; $("#cMap").innerHTML = maps.map(m => `<option>${m}</option>`).join(""); }
+    $("#roomList").innerHTML = j.rooms.map(r => {
+      const mine = r.you, full = r.players.top && r.players.bottom;
+      const act = mine ? `<button onclick="location.hash='#/room/${r.code}'">Vào</button>`
+        : !full ? `<button onclick="joinRoom('${r.code}')">Join</button>` : `<button onclick="location.hash='#/room/${r.code}'">Xem</button>`;
+      return `<tr><td><b>${r.code}</b></td><td>${esc(r.name)}<div class="muted" style="font-size:12px">${esc(r.map)}</div></td>
+        <td><span style="color:var(--gold)">${esc(r.players.bottom || "—")}</span> vs <span style="color:var(--blue)">${esc(r.players.top || "—")}</span></td>
+        <td>${r.status}</td><td>${act}</td></tr>`;
+    }).join("") || `<tr><td colspan="5" class="muted">Chưa có phòng nào.</td></tr>`;
+  } catch (e) { if (String(e.message).includes("đăng nhập")) { localStorage.clear(); token = null; route(); } }
+}
+async function joinRoom(code) { try { await api(`/web/rooms/${code}/join`, { method: "POST" }); location.hash = "#/room/" + code; } catch (e) { alert(e.message); } }
+$("#btnCreate").onclick = async () => {
+  const cfg = { time_scale: +$("#cScale").value, game_seconds: +$("#cGame").value, armor_game_seconds: +$("#cArmor").value,
+                tanks: +$("#cTanks").value, lives: +$("#cLives").value, map: $("#cMap").value || "random" };
+  try { const r = await api("/web/rooms", { method: "POST", body: { name: $("#cName").value, bot: $("#cBot").value || null, config: cfg } });
+        location.hash = "#/room/" + r.code; } catch (e) { alert(e.message); }
+};
+
+// ---------------- room
+async function pollRoom() {
+  clearInterval(pollTimer);
+  const loop = async () => {
+    if (!roomCode) return;
+    try { const v = await api(`/web/rooms/${roomCode}/view`); lastView = v; renderRoom(v); }
+    catch (e) { $("#rStatus").textContent = e.message; }
+    pollTimer = setTimeout(loop, lastView && lastView.game.status === "live" ? 100 : 700);
+  };
+  loop();
+}
+function renderRoom({ room, game }) {
+  $("#rCode").textContent = room.code;
+  const st = room.status;
+  const sb = $("#rStatus"); sb.className = "badge" + (st === "live" ? " live" : "");
+  sb.textContent = st === "live" ? "LIVE" : st === "countdown" ? `Bắt đầu sau ${Math.ceil(room.countdown)}s` : st === "finished" ? "Hết trận" : "Chờ sẵn sàng";
+  $("#rClock").textContent = fmt(game.time_left);
+  $("#rArmor").textContent = game.armor_left > 0 ? "GIÁP " + fmt(game.armor_left) : "Hết giáp";
+  const c = room.config;
+  $("#rCfg").textContent = `Duel · ${c.tanks} xe/bên · ${c.lives} mạng/xe · căn cứ ${c.base_hp} máu · tốc độ ×${c.clock_rate} · nhịp ${c.tick_s}s · tối đa ${c.max_queue} bước chờ · mốc ${c.score_target} điểm · bản đồ ${room.map}` + (c.time_scale !== 1 ? ` · TUA NHANH ×${c.time_scale}` : "");
+  const you = room.you;
+  const rb = $("#btnReady");
+  rb.classList.toggle("hidden", !you || st === "live" || st === "finished");
+  if (you) { const ready = room.ready[you]; rb.textContent = ready ? "Huỷ sẵn sàng" : "Sẵn sàng"; rb.disabled = !room.agent_seen[you] && !ready;
+             rb.title = room.agent_seen[you] ? "" : "Agent chưa gọi API cho phòng này"; }
+  $("#btnAgent").classList.toggle("hidden", !you); $("#btnLog").classList.toggle("hidden", !you);
+  $("#btnSettings").classList.toggle("hidden", !(you && room.owner === me && st === "scheduled"));
+  $("#btnLeave").textContent = you ? "Rời phòng" : "Về sảnh";
+  for (const side of ["bottom", "top"]) renderSide(side, room, game);
+  draw(game);
+  $("#feed").innerHTML = game.events.slice().reverse().map(e => `<div><span class="t">${fmt(room.config.game_seconds - (e.t || 0))}</span>${esc(e.text)}</div>`).join("") ||
+    `<div class="muted">Diễn biến sẽ hiện ở đây.</div>`;
+  if (st === "finished" && !resultShown) { resultShown = true; showResult(room, game); }
+  if (st !== "finished") resultShown = false;
+}
+function renderSide(side, room, game) {
+  const el = side === "bottom" ? $("#sideBottom") : $("#sideTop");
+  const tanks = game.tanks.filter(t => t.side === side).sort((a, b) => a.id - b.id);
+  const hp = game.base_hp[side], max = room.config.base_hp;
+  const kills = tanks.reduce((a, t) => a + t.kills, 0), eh = tanks.reduce((a, t) => a + t.eagle_hits, 0);
+  el.innerHTML = `<h3>${side === "bottom" ? "▼ DƯỚI" : "▲ TRÊN"} · ${esc(room.players[side] || "(trống)")}</h3>
+    <div class="muted" style="font-size:12px"><span class="dot ${room.agent_seen[side] ? "on" : ""}"></span>agent${room.agent_model[side] ? " · " + esc(room.agent_model[side]) : ""}
+     · ${room.ready[side] ? "✅ sẵn sàng" : "chưa sẵn sàng"}</div>
+    <div class="clock" style="font-size:20px;margin-top:6px">${game.score[side]} <span class="muted" style="font-size:12px">điểm</span></div>
+    <div class="stats"><span title="Hạ xe đối thủ">🎯 ${kills}</span><span title="Số lần bắn trúng căn cứ địch">🦅 ${eh}</span></div>
+    <div class="hp" title="Máu đại bàng">${Array.from({ length: max }, (_, i) => `<i class="${i < hp ? "on" : ""}"></i>`).join("")}</div>
+    ${tanks.map(t => `<div class="tankrow ${t.alive ? "" : "dead"}"><b>XE ${t.id}</b><span>♥×${t.lives} ${"★".repeat(t.stars)}${t.shield ? " 🛡" : ""}</span>
+      <span class="doing">${t.alive ? esc(t.doing) : t.lives > 0 ? "đang hồi sinh…" : "hết mạng"}</span></div>`).join("")}`;
+}
+async function showResult(room, game) {
+  const w = game.winner;
+  $("#resTitle").innerHTML = `<span style="color:${w === "bottom" ? "var(--gold)" : "var(--blue)"}">${esc(room.players[w] || "")}</span> thắng`;
+  $("#resReason").textContent = `${game.reason} · ${game.score.bottom} – ${game.score.top}`;
+  const rows = game.tanks.sort((a, b) => (a.side > b.side ? 1 : -1) || a.id - b.id).map(t =>
+    `<tr><td style="color:${t.side === "bottom" ? "var(--gold)" : "var(--blue)"}">Xe ${t.id} ${SIDE_VI[t.side]}</td><td>${t.kills}</td><td>${t.deaths}</td><td>${t.items}</td><td>${t.eagle_hits}</td><td style="color:${t.own_eagle_hits ? "var(--red)" : "inherit"}">${t.own_eagle_hits}</td><td>${t.idle_s}s</td></tr>`).join("");
+  $("#resTable").innerHTML = `<table><thead><tr><th>Xe</th><th>Hạ</th><th>Bị hạ</th><th>Vật phẩm</th><th>Trúng nhà địch</th><th>Bắn nhà mình</th><th>Đứng không việc</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="muted" style="font-size:12px">"Đứng không việc" cao = vòng lặp agent chậm hoặc quên giao việc.</p>`;
+  $("#btnRematch").classList.toggle("hidden", room.owner !== me);
+  $("#mResult").classList.remove("hidden");
+}
+$("#btnReady").onclick = async () => { const v = lastView; if (!v) return;
+  try { await api(`/web/rooms/${roomCode}/ready`, { method: "POST", body: { ready: !v.room.ready[v.room.you] } }); } catch (e) { alert(e.message); } };
+$("#btnLeave").onclick = async () => { if (lastView && lastView.room.you) { try { await api(`/web/rooms/${roomCode}/leave`, { method: "POST" }); } catch (e) { return alert(e.message); } } location.hash = ""; };
+$("#btnRematch").onclick = async () => { try { await api(`/web/rooms/${roomCode}/rematch`, { method: "POST" }); $("#mResult").classList.add("hidden"); } catch (e) { alert(e.message); } };
+$("#btnResLobby").onclick = () => { $("#mResult").classList.add("hidden"); location.hash = ""; };
+
+// agent modal
+async function openAgent(code) {
+  const j = await api("/web/me"); const apiUrl = location.origin + "/api/v1";
+  $("#aApi").textContent = apiUrl; $("#aCode").textContent = code || "(vào phòng để có mã)";
+  $("#aToken").textContent = j.token.slice(0, 6) + "…" + j.token.slice(-4); $("#aToken").dataset.full = j.token;
+  $("#aPs").textContent = `$env:BCO_TOKEN = "${j.token}"\n$env:BCO_BASE_URL = "${apiUrl}"`;
+  $("#aSh").textContent = `export BCO_TOKEN=${j.token}\nexport BCO_BASE_URL=${apiUrl}`;
+  $("#aPrompt").textContent = `Dùng skill battle-city-online. PHÒNG: ${code || "ABCD"}. Chiến thuật adaptive.\nChơi tới khi trận kết thúc. Không dừng, không hỏi lại giữa trận.`;
+  $("#mAgent").classList.remove("hidden");
+}
+$("#btnAgent").onclick = () => openAgent(roomCode);
+$("#btnAgentTop").onclick = () => openAgent(roomCode);
+$("#btnCopyTok").onclick = () => navigator.clipboard.writeText($("#aToken").dataset.full);
+$("#btnNewTok").onclick = async () => { if (!confirm("Tạo token mới? Token cũ sẽ hết hiệu lực.")) return;
+  const j = await api("/web/token/new", { method: "POST" }); token = j.token; localStorage.setItem("bco_token", token); openAgent(roomCode); };
+
+// agent log
+let logTimer = null;
+$("#btnLog").onclick = () => { $("#mLog").classList.remove("hidden"); const load = async () => {
+  if ($("#mLog").classList.contains("hidden")) return clearInterval(logTimer);
+  const j = await api(`/web/rooms/${roomCode}/agentlog`);
+  $("#logBody").innerHTML = j.log.slice().reverse().map(e => `<tr><td>${e.t}</td><td><code>${e.method} ${esc(e.path)}</code></td>
+    <td style="color:${e.status >= 400 ? "var(--red)" : "var(--green)"}">${e.status}</td><td><code>${esc(e.req)}</code></td><td><code>${esc(e.resp)}</code></td></tr>`).join("")
+    || `<tr><td colspan="5" class="muted">Agent chưa gọi API nào cho phòng này.</td></tr>`; };
+  load(); clearInterval(logTimer); logTimer = setInterval(load, 1500); };
+
+// settings
+$("#btnSettings").onclick = () => { const c = lastView.room.config;
+  $("#setForm").innerHTML = Object.entries(CFG_LABEL).map(([k, label]) => k === "map"
+    ? `<label class="f">${label}<select data-k="map">${maps.map(m => `<option ${m === c.map ? "selected" : ""}>${m}</option>`).join("")}</select></label>`
+    : `<label class="f">${label}<input data-k="${k}" type="number" step="any" value="${c[k]}"></label>`).join("");
+  $("#mSettings").classList.remove("hidden"); };
+$("#btnSaveCfg").onclick = async () => { const body = {}; document.querySelectorAll("#setForm [data-k]").forEach(i => body[i.dataset.k] = i.tagName === "SELECT" ? i.value : +i.value);
+  try { await api(`/web/rooms/${roomCode}/config`, { method: "POST", body }); $("#mSettings").classList.add("hidden"); } catch (e) { alert(e.message); } };
+
+// ---------------- canvas
+const cv = $("#cv"), ctx = cv.getContext("2d"); const N = 42, C = 16;
+const COL = { ".": "#0b0b0b", "#": "#a8542b", "@": "#9aa3ad", "~": "#1f5fbf", "%": "#2f7d32", "-": "#cfe7f5" };
+function draw(g) {
+  ctx.fillStyle = "#0b0b0b"; ctx.fillRect(0, 0, cv.width, cv.height);
+  const rows = g.grid;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const ch = rows[y][x]; if (ch === "." || ch === "%") continue;
+    ctx.fillStyle = COL[ch] || "#333"; ctx.fillRect(x * C, y * C, C, C);
+    if (ch === "#") { ctx.fillStyle = "#7a3a1c"; ctx.fillRect(x * C, y * C + C / 2 - 1, C, 2); ctx.fillRect(x * C + (y % 2 ? C / 2 : 0), y * C, 2, C / 2); }
+    if (ch === "@") { ctx.fillStyle = "#d7dde3"; ctx.fillRect(x * C + 3, y * C + 3, C - 6, C - 6); }
+  }
+  for (const [side, e] of Object.entries(g.eagles)) {
+    const blink = e.invuln && Math.floor(Date.now() / 200) % 2;
+    ctx.fillStyle = blink ? "#fff" : side === "bottom" ? "#f2c14e" : "#4fb3e8";
+    ctx.fillRect(e.x * C + 2, e.y * C + 2, 2 * C - 4, 2 * C - 4);
+    ctx.font = `${C * 1.4}px serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("🦅", e.x * C + C, e.y * C + C + 1);
+  }
+  for (const it of g.items) { ctx.font = `${C * 1.5}px serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    if (Math.floor(Date.now() / 300) % 4) ctx.fillText(ITEM[it.kind] || "?", it.x * C + C, it.y * C + C + 1); }
+  for (const t of g.tanks) {
+    if (!t.alive) continue;
+    const x = (t.to ? t.x + (t.to[0] - t.x) * t.p : t.x) * C, y = (t.to ? t.y + (t.to[1] - t.y) * t.p : t.y) * C;
+    const col = t.side === "bottom" ? "#f2c14e" : "#4fb3e8";
+    ctx.fillStyle = col; ctx.fillRect(x + 2, y + 2, 2 * C - 4, 2 * C - 4);
+    ctx.fillStyle = "#222"; ctx.fillRect(x + 7, y + 7, 2 * C - 14, 2 * C - 14);
+    ctx.strokeStyle = col; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(x + C, y + C);
+    const d = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[t.dir]; ctx.lineTo(x + C + d[0] * (C + 1), y + C + d[1] * (C + 1)); ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = `bold ${C - 2}px system-ui`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(t.id, x + C, y + C + 1);
+    if (t.shield) { ctx.strokeStyle = "rgba(255,255,255,.8)"; ctx.lineWidth = 2; ctx.setLineDash([4, 3]); ctx.strokeRect(x, y, 2 * C, 2 * C); ctx.setLineDash([]); }
+  }
+  for (const b of g.bullets) { const vert = b.dir === "up" || b.dir === "down";
+    const bx = vert ? b.x * C + C : b.x * C + C / 2, by = vert ? b.y * C + C / 2 : b.y * C + C;
+    ctx.fillStyle = b.side === "bottom" ? "#ffe08a" : "#bfe8ff"; ctx.fillRect(bx - 3, by - 3, 6, 6); }
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (rows[y][x] === "%") { ctx.fillStyle = "rgba(47,125,50,.88)"; ctx.fillRect(x * C, y * C, C, C); }
+  ctx.strokeStyle = "rgba(255,255,255,.12)"; ctx.setLineDash([6, 6]); ctx.beginPath(); ctx.moveTo(0, 21 * C); ctx.lineTo(N * C, 21 * C); ctx.stroke(); ctx.setLineDash([]);
+}
+
+route();
+</script>
+</body>
+</html>

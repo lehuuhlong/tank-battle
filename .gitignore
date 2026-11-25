@@ -3,3 +3,4 @@ __pycache__/
 bco-data/
 *.zip
 .env
+server/data/
