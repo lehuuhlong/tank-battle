@@ -158,13 +158,20 @@ python server\app.py --host 0.0.0.0 --port 8080
 4. Xem trận trực tiếp; **Nhật ký agent** cho thấy mọi lần agent gọi API. Hết trận có bảng kết quả: số xe hạ, bị hạ, vật phẩm,
    số lần trúng nhà địch, **số lần bắn trúng nhà mình**, và **số giây đứng không việc** của từng xe. Chủ phòng bấm **Đấu lại**.
 
-Chạy thẳng runner của skill, không qua Claude Code:
+### Kiểm tra nhanh: runner tự chơi, không qua Claude
+Nếu agent thua bot, chạy thử runner trực tiếp để biết lỗi nằm ở skill hay ở cách agent chạy nó. Tạo phòng với bot,
+copy token trong **Cài đặt agent**, rồi trong PowerShell:
 ```powershell
-$env:BCO_BASE_URL = "http://localhost:8080/api/v1"
+$env:BCO_TOKEN = "token-của-bạn"; $env:BCO_BASE_URL = "http://localhost:8080/api/v1"
 ```
 ```powershell
 python .claude\skills\battle-city-online\scripts\bco.py run ABCD --strategy adaptive
 ```
+Bấm **Sẵn sàng** trên web và để runner chơi tới hết trận. Trên máy tôi, runner thắng bot Khó ở cả tốc độ thật lẫn tua nhanh.
+Nếu runner tự chơi thì thắng mà chạy qua Claude lại thua, gần như chắc chắn runner không chạy liên tục khi Claude khởi động nó:
+lệnh Bash thường của Claude Code bị dừng sau khoảng 2 phút, hoặc Claude tự ra lệnh từng xe thay cho runner. Skill hiện dặn Claude
+dùng `bco.py run … --detach` (runner chạy nền độc lập) và `bco.py watch CODE --ensure` (tự khởi động lại nếu runner chết).
+Nhớ `git pull` để có bản mới nhất.
 
 ### Có gì
 - **API:** `GET /matches`, `GET /matches/{code}` (nhận `X-Agent-Model`), `/rules`, `/state?map=true`, `POST /plan` / `/orders` / `/stop`.

@@ -44,7 +44,10 @@ Dữ liệu từng trận nằm trong `./bco-data/<CODE>/`: match.json, rules.js
    - ghi lại bảng schema ở `references/rules.md` để lần sau không phải dò nữa.
 4. Dịch chiến thuật của người dùng thành `bco-data/CODE/plan.json` (mục 5). Người dùng không nêu chiến thuật thì dùng `adaptive`.
 5. Kiểm tra: `bco.py analyze bco-data/CODE/state-latest.json --side <bên> --strategy scripted --param plan=bco-data/CODE/plan.json`.
-6. Chạy nền (Bash `run_in_background`): `bco.py run CODE --strategy scripted` (hoặc `--strategy adaptive`).
+6. Khởi động runner **tách nền**: `bco.py run CODE --strategy scripted --detach` (hoặc `--strategy adaptive`).
+   Lệnh trả về ngay; runner chạy thành tiến trình riêng, ghi log ở `bco-data/CODE/runner.log`.
+   **Không bao giờ chạy `bco.py run` không có `--detach`**: lệnh Bash thường của Claude Code bị dừng sau ~2 phút, runner chết
+   theo và xe đứng yên → thua. **Không tự ra lệnh từng xe bằng tay thay cho runner** (mỗi lần mất vài giây, bot phản ứng mỗi 0,1 giây).
    Nếu trận chưa `live`, runner tự chờ; nhắc người dùng bấm **Sẵn sàng**.
 
 ## 4. Bản đồ và toạ độ
@@ -95,9 +98,10 @@ Mọi vai đều tự bắn xe địch khi thẳng hàng. Khi còn giáp, các v
 Các luật được xét theo thứ tự, luật sau ghi đè luật trước. Ý nào của người dùng không diễn đạt được bằng vai/điều kiện thì chọn vai gần nhất và nói rõ trong một dòng.
 
 ## 6. Vòng giám sát
-Lặp: `bco.py watch CODE --seconds 25` → in 1 dòng → xử lý nếu cần → lặp lại.
+Lặp: `bco.py watch CODE --seconds 25 --ensure` → in 1 dòng → xử lý nếu cần → lặp lại.
+`--ensure`: nếu runner đã chết mà trận chưa xong, watch **tự khởi động lại** runner với tham số cũ (và báo lại).
 - Mã thoát 3 hoặc thấy `TRẬN KẾT THÚC`: sang mục 8.
-- Mã thoát 4 (runner đã chết): xem output của lệnh nền rồi chạy lại `bco.py run`.
+- Mã thoát 4 (runner đã chết, không có `--ensure` hoặc chưa từng `--detach`): chạy `bco.py run CODE … --detach`, xem lý do trong `runner.log`.
 - Đổi chiến thuật **mà không dừng runner**:
   - sửa `bco-data/CODE/plan.json` (runner đọc lại ngay ở nhịp sau), hoặc
   - ghi `bco-data/CODE/control.json`, ví dụ `{"strategy":"fortress","params":{"hunters":"1"}}`, `{"pause":true}` hay `{"quit":true}`.

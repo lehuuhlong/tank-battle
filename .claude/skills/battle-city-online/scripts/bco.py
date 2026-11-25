@@ -18,6 +18,7 @@ import argparse
 import collections
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -265,7 +266,43 @@ def cmd_stop(a):
         dump({t: c.stop(code, t)})
 
 
+def runner_alive(code, max_age=6.0):
+    """The runner rewrites state-latest.json every cycle: a fresh file = the runner is alive
+    (works on Windows too, no PID tricks)."""
+    p = os.path.join(DATA_DIR, str(code), "state-latest.json")
+    return os.path.exists(p) and time.time() - os.path.getmtime(p) < max_age
+
+
+def launch_detached(code, args):
+    """Start `bco.py run CODE args...` as its own background process that keeps running after the
+    calling shell / Claude Code command returns. Output goes to bco-data/CODE/runner.log."""
+    mdir = match_dir(code)
+    save_json(os.path.join(mdir, "runner.args.json"), {"args": args})
+    log = open(os.path.join(mdir, "runner.log"), "a", encoding="utf-8")
+    log.write(f"\n# ---- start {time.strftime('%H:%M:%S')}: run {code} {' '.join(args)}\n")
+    log.flush()
+    cmd = [sys.executable, os.path.abspath(__file__), "run", code] + args
+    kw = dict(stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, cwd=os.getcwd(), env=dict(os.environ, BCO_DATA_DIR=DATA_DIR))
+    if os.name == "nt":
+        kw["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kw["start_new_session"] = True
+    proc = subprocess.Popen(cmd, **kw)
+    return proc.pid
+
+
 def cmd_run(a):
+    if a.detach:
+        client = Client()
+        code = resolve_code(client, a.code)
+        if runner_alive(code):
+            print(f"# runner cho phòng {code} đang chạy rồi (state-latest.json vừa cập nhật). Đổi chiến thuật: sửa control.json / plan.json")
+            return
+        args = [x for x in sys.argv[2:] if x not in ("--detach", a.code or "")]
+        pid = launch_detached(code, args)
+        print(f"# runner chạy nền: pid={pid}, phòng={code}. Log: {os.path.join(match_dir(code), 'runner.log')}")
+        print(f"# theo dõi: bco.py watch {code} --ensure    · dừng: ghi {{\"quit\": true}} vào control.json")
+        return
     client = Client()
     code = resolve_code(client, a.code)
     mdir = match_dir(code)
@@ -448,13 +485,18 @@ def cmd_watch(a):
             print("  ! cảnh báo:", w)
     for x in dict.fromkeys(alerts):
         print("  !", x)
-    if not finished and not recs:
-        if os.path.exists(state_path) and time.time() - os.path.getmtime(state_path) < 10:
-            print("trận vừa bắt đầu — gọi watch lại" if st in ("live", "playing", "running")
-                  else f"chờ trận bắt đầu (status={st or '?'}) — người dùng cần bấm Sẵn sàng")
+    if not finished and not runner_alive(a.code, 8.0):
+        args_file = os.path.join(d, "runner.args.json")
+        if a.ensure and os.path.exists(args_file):
+            pid = launch_detached(a.code, load_json(args_file)["args"])
+            print(f"! runner đã dừng — ĐÃ KHỞI ĐỘNG LẠI (pid={pid}). Xem lý do dừng trong {os.path.join(d, 'runner.log')}")
             sys.exit(0)
-        print("! không có nhịp mới — runner (bco.py run) có đang chạy không? Chạy lại nếu đã chết.")
+        print("! runner không chạy (state không được cập nhật). Chạy: bco.py run CODE --detach  (hoặc watch --ensure)")
         sys.exit(4)
+    if not finished and not recs:
+        print("trận vừa bắt đầu — gọi watch lại" if st in ("live", "playing", "running")
+              else f"chờ trận bắt đầu (status={st or '?'}) — người dùng cần bấm Sẵn sàng")
+        sys.exit(0)
     sys.exit(3 if finished else 0)
 
 
@@ -492,8 +534,10 @@ def main():
     p.add_argument("--round-margin", type=float, default=0.05, help="(--sync late) chừa thêm bao nhiêu giây ngoài độ trễ đo được");
     p.add_argument("--max-minutes", type=float, default=40); p.add_argument("--quiet", action="store_true")
     p.add_argument("--separate-stop", action="store_true", help="gọi POST /stop riêng thay vì đặt stop đầu /plan")
+    p.add_argument("--detach", action="store_true", help="chạy runner thành tiến trình nền độc lập rồi trả về ngay (khuyên dùng)")
     p.set_defaults(fn=cmd_run)
     p = sub.add_parser("watch"); p.add_argument("code"); p.add_argument("--seconds", type=float, default=25)
+    p.add_argument("--ensure", action="store_true", help="runner chết mà trận chưa xong → tự khởi động lại (tham số cũ)")
     p.set_defaults(fn=cmd_watch)
 
     a = ap.parse_args()
