@@ -1352,6 +1352,7 @@ class Commander:
         self.inline_stop = inline_stop
         self.pending_window_s = 1.2   # tick 0.5s + network; overridable (used when the state has no "round")
         self.pending_round = {}       # tank -> round at which our last orders apply (from the /plan reply)
+        self.last_applies_round = None
         self.last_response = None
         self.memory = {}          # team memory shared by strategies (eagle timing, caches...)
         self.tanks = {}           # per tank: job, sent_at, fire_at, rejects, pos
@@ -1508,6 +1509,7 @@ class Commander:
             r = per.get(tid, top)
             if isinstance(r, int):
                 self.pending_round[tid] = r
+                self.last_applies_round = max(self.last_applies_round or 0, r)
 
     def _send(self, steps):
         sent = sorted({s["tank"] for s in steps}, key=str)

@@ -32,8 +32,11 @@ Lỗi: `401 missing token…` / `401 unknown player key…` · `404 room ZZZZ do
 `409 the match has not started yet…` (chờ) · `409 room VEQR is over (finished)…` (thoát) · `400 unknown step 'up'` (`do` là động từ,
 hướng ở `direction`) · `400 tank is required…` · `400 move does not take foo` · `400 count must be between 1 and 3` · `429` (gọi quá nhiều).
 
-**Nhịp lệnh:** state có `round` và `next_round_in_s`; lệnh gửi đi áp dụng ở nhịp sau (`applies_in_round`). Runner ngủ tới ngay
-sau mốc nhịp kế rồi mới lấy state (dữ liệu mới nhất), và coi xe là "đang có lệnh chờ" cho tới `applies_in_round`.
+**Nhịp lệnh:** state có `round` và `next_round_in_s`; lệnh gửi đi chỉ có hiệu lực ở mốc nhịp sau (`applies_in_round`).
+Runner (`--sync late`, mặc định) lấy state **ngay trước** mốc nhịp, chừa đúng độ trễ đo được (lấy state + tính + gửi lệnh) cộng
+một khoảng an toàn, nên lệnh có hiệu lực với vị trí mới nhất — như bot "nghĩ" ngay trước mỗi nhịp. Nếu phản hồi cho thấy lệnh bị
+lùi sang nhịp sau (`applies_in_round` > `round` + 1) thì tự nới khoảng an toàn. `--sync early` = lấy ngay sau mốc nhịp (cách cũ).
+Xe được coi là "đang có lệnh chờ" cho tới `applies_in_round`.
 
 ## Cấu hình mặc định
 Duel (không NPC) · điều khiển tay · 4 xe/bên · 15 mạng/xe · căn cứ 5 máu, **giáp 3:00 đầu** · tối đa 16 phút thực

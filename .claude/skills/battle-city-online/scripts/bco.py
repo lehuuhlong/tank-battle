@@ -297,6 +297,7 @@ def cmd_run(a):
     control = os.path.join(mdir, "control.json")
     ctl_mtime, paused, errors, waiting_logged = None, False, 0, False
     interval, seen429, last429 = a.interval, 0, -1e9  # adaptive pace: slow down on 429, recover after 10s
+    lat_est, tick_est, last_round, margin = None, None, None, a.round_margin   # round sync (see --sync)
     deadline = time.time() + a.max_minutes * 60
     while time.time() < deadline:
         t0 = time.time()
@@ -366,11 +367,36 @@ def cmd_run(a):
             for tid, r in report.items():
                 print(f"  T{tid}: {r}")
             break
-        if game.next_round_in_s is not None and interval <= a.interval:
-            # sync with the server's command rounds: fetch the next state just after the next round has
-            # been applied (freshest positions), so the plan we compute lands before the round after
-            wake = t_fetch + game.next_round_in_s + a.round_offset
-            time.sleep(min(max(0.02, wake - time.time()), 1.0))  # missed it → fetch now (still fresh)
+        # late sync self-check: if our plan landed after the boundary it applies one round later → widen margin
+        if cmd.last_applies_round is not None and game.round is not None:
+            if cmd.last_applies_round > game.round + 1:
+                margin = min(0.3, margin + 0.03)
+            else:
+                margin = max(a.round_margin, margin - 0.002)
+            cmd.last_applies_round = None
+        lat = time.time() - t0                             # this cycle: state fetch + decide + plan post
+        lat_est = lat if lat_est is None else max(0.8 * lat_est + 0.2 * lat, lat * 0.9)
+        if game.next_round_in_s is not None and interval <= a.interval and a.sync != "off":
+            boundary = t_fetch + game.next_round_in_s           # when the server applies the next round
+            if game.round is not None and last_round is not None and game.round > last_round[0]:
+                obs = (boundary - last_round[1]) / (game.round - last_round[0])
+                if 0.05 < obs < 2.0:
+                    tick_est = obs if tick_est is None else 0.8 * tick_est + 0.2 * obs
+            if game.round is not None:
+                last_round = (game.round, boundary)
+            tick = tick_est or 0.5
+            if a.sync == "late":
+                # Orders only take effect at a round boundary. Fetch the state as LATE as possible before it
+                # (leaving our measured latency + a margin to decide and post), so the plan acts on the
+                # freshest positions — same as a bot that "thinks" right before each round.
+                lead = lat_est + margin
+                wake = boundary
+                while wake - lead <= time.time() + 0.01:
+                    wake += tick
+                wake -= lead
+            else:  # "early": just after the round was applied
+                wake = t_fetch + game.next_round_in_s + a.round_offset
+            time.sleep(min(max(0.01, wake - time.time()), 1.0))
         else:
             time.sleep(max(0.02, interval - (time.time() - t0)))
 
@@ -460,7 +486,10 @@ def main():
     p.add_argument("--param", action="append", default=[]); p.add_argument("--side", choices=["top", "bottom"])
     p.add_argument("--interval", type=float, default=0.5, help="giây/nhịp (server 0,5s); tự giãn khi gặp 429"); p.add_argument("--refresh", type=float, default=4.0)
     p.add_argument("--dry-run", action="store_true"); p.add_argument("--once", action="store_true")
-    p.add_argument("--round-offset", type=float, default=0.06, help="ngủ tới sau nhịp server bao nhiêu giây");
+    p.add_argument("--round-offset", type=float, default=0.06, help="(--sync early) ngủ tới sau nhịp server bao nhiêu giây");
+    p.add_argument("--sync", choices=["late", "early", "off"], default="late",
+                   help="late = lấy state ngay TRƯỚC nhịp lệnh (dữ liệu mới nhất khi lệnh có hiệu lực, mặc định)");
+    p.add_argument("--round-margin", type=float, default=0.05, help="(--sync late) chừa thêm bao nhiêu giây ngoài độ trễ đo được");
     p.add_argument("--max-minutes", type=float, default=40); p.add_argument("--quiet", action="store_true")
     p.add_argument("--separate-stop", action="store_true", help="gọi POST /stop riêng thay vì đặt stop đầu /plan")
     p.set_defaults(fn=cmd_run)
