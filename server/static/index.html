@@ -7,7 +7,7 @@
 <style>
   :root {
     --bg: #0f1218; --panel: #171c25; --panel2: #1e2430; --line: #2a3242; --text: #e6e9ef; --muted: #8b93a5;
-    --gold: #f2c14e; --blue: #4fb3e8; --green: #3ecf6e; --red: #ef5b5b; --accent: #f2c14e;
+    --gold: #f2c14e; --blue: #58d860; --green: #3ecf6e; --red: #ef5b5b; --accent: #f2c14e;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -51,7 +51,8 @@
   .hp { display: flex; gap: 3px; margin: 8px 0; } .hp i { flex: 1; height: 8px; border-radius: 2px; background: #3a1d1d; }
   .hp i.on { background: var(--red); }
   .stats { display: flex; gap: 10px; font-size: 12px; color: var(--muted); margin: 6px 0 2px; }
-  canvas { display: block; border-radius: 8px; background: #000; max-width: 100%; image-rendering: pixelated; }
+  canvas { display: block; background: #000; max-width: 100%; image-rendering: pixelated; border: 12px solid #6c6c6c;
+           box-shadow: inset 0 0 0 2px #3c3c3c, 0 0 0 2px #2a2a2a; border-radius: 4px; }
   .feed { margin-top: 12px; max-height: 190px; overflow: auto; font-size: 13px; }
   .feed div { padding: 3px 0; border-bottom: 1px dashed var(--line); }
   .feed .t { color: var(--muted); font-family: ui-monospace, monospace; margin-right: 6px; }
@@ -345,43 +346,162 @@ $("#btnSettings").onclick = () => { const c = lastView.room.config;
 $("#btnSaveCfg").onclick = async () => { const body = {}; document.querySelectorAll("#setForm [data-k]").forEach(i => body[i.dataset.k] = i.tagName === "SELECT" ? i.value : +i.value);
   try { await api(`/web/rooms/${roomCode}/config`, { method: "POST", body }); $("#mSettings").classList.add("hidden"); } catch (e) { alert(e.message); } };
 
-// ---------------- canvas
-const cv = $("#cv"), ctx = cv.getContext("2d"); const N = 42, C = 16;
-const COL = { ".": "#0b0b0b", "#": "#a8542b", "@": "#9aa3ad", "~": "#1f5fbf", "%": "#2f7d32", "-": "#cfe7f5" };
-function draw(g) {
-  ctx.fillStyle = "#0b0b0b"; ctx.fillRect(0, 0, cv.width, cv.height);
-  const rows = g.grid;
+// ---------------- canvas: Tank 1990 (NES Battle City) pixel art, drawn in code
+// One map cell = 8x8 NES pixels, shown at 16x16 screen pixels (K = 2). Tanks / eagle / items = 16x16 NES px.
+const cv = $("#cv"), ctx = cv.getContext("2d"); const N = 42, C = 16, K = C / 8;
+ctx.imageSmoothingEnabled = false;
+const PAL = {
+  brick: "#b8501c", brickHi: "#e8784c", brickLo: "#7a2c08", mortar: "#6c6c6c",
+  steel: "#bcbcbc", steelHi: "#fcfcfc", steelLo: "#6c6c6c",
+  water: "#2050e8", waterHi: "#5c94fc", waterLo: "#1830a8",
+  tree: "#106c00", treeHi: "#58d854", treeMid: "#00a800",
+  ice: "#d8d8e8", iceHi: "#fcfcfc",
+  bullet: "#e8e8e8",
+};
+const TANKCOL = { bottom: { a: "#fcf0a8", b: "#e8b800", c: "#886000" },   // vàng (người chơi dưới)
+                  top:    { a: "#b8f8b8", b: "#30b840", c: "#005800" } };  // xanh (người chơi trên)
+
+// --- terrain tiles (8x8 NES px), pre-rendered once (water: 2 animation frames)
+function tile(drawFn) { const c = document.createElement("canvas"); c.width = c.height = C; const g = c.getContext("2d");
+  const px = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x * K, y * K, w * K, h * K); }; drawFn(px); return c; }
+const TILE = {
+  "#": tile(px => { px(0, 0, 8, 8, PAL.brick);
+    px(0, 3, 8, 1, PAL.mortar); px(0, 7, 8, 1, PAL.mortar); px(7, 0, 1, 3, PAL.mortar); px(3, 4, 1, 3, PAL.mortar);
+    px(0, 0, 7, 1, PAL.brickHi); px(4, 4, 4, 1, PAL.brickHi); px(0, 4, 3, 1, PAL.brickHi);
+    px(0, 2, 7, 1, PAL.brickLo); px(4, 6, 4, 1, PAL.brickLo); px(0, 6, 3, 1, PAL.brickLo); }),
+  "@": tile(px => { px(0, 0, 8, 8, PAL.steel); px(0, 0, 8, 1, PAL.steelHi); px(0, 0, 1, 8, PAL.steelHi);
+    px(7, 0, 1, 8, PAL.steelLo); px(0, 7, 8, 1, PAL.steelLo); px(2, 2, 4, 4, PAL.steelHi); px(3, 3, 3, 3, PAL.steel); }),
+  "-": tile(px => { px(0, 0, 8, 8, PAL.ice); for (let i = 0; i < 8; i += 3) px(i, 7 - i, 2, 1, PAL.iceHi); px(5, 1, 2, 1, PAL.iceHi); }),
+  "%": tile(px => { px(0, 0, 8, 8, PAL.tree);
+    for (const [x, y] of [[0,0],[3,0],[6,1],[1,2],[4,2],[7,3],[0,4],[2,4],[5,5],[1,6],[4,7],[7,6]]) px(x, y, 2, 1, PAL.treeMid);
+    for (const [x, y] of [[1,0],[4,1],[0,3],[6,3],[3,5],[6,6],[2,7]]) px(x, y, 1, 1, PAL.treeHi); }),
+};
+const WATER = [0, 1].map(f => tile(px => { px(0, 0, 8, 8, PAL.water);
+  const o = f * 3; for (const [x, y] of [[1, 1], [5, 3], [2, 5], [6, 7]]) { px((x + o) % 8, y, 2, 1, PAL.waterHi); px((x + o + 3) % 8, (y + 1) % 8, 1, 1, PAL.waterLo); } }));
+
+// --- tiny 3x5 pixel digits for tank numbers
+const DIGITS = { 1: ["010","110","010","010","111"], 2: ["111","001","111","100","111"], 3: ["111","001","011","001","111"],
+                 4: ["101","101","111","001","001"], 5: ["111","100","111","001","111"], 6: ["111","100","111","101","111"],
+                 7: ["111","001","010","010","010"], 8: ["111","101","111","101","111"], 9: ["111","101","111","001","111"] };
+
+// --- tank sprite, drawn facing up then rotated (16x16 NES px)
+const ANG = { up: 0, right: Math.PI / 2, down: Math.PI, left: -Math.PI / 2 };
+function drawTank(x, y, dir, col, id, stars, moving, shield, now) {
+  ctx.save(); ctx.translate(x + C, y + C); ctx.rotate(ANG[dir] || 0); ctx.translate(-C, -C);
+  const px = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(a * K, b * K, w * K, h * K); };
+  const f = moving ? Math.floor(now / 90) % 2 : 0;
+  for (const tx of [0, 12]) {                       // treads, links scroll while moving
+    px(tx, 1, 4, 15, col.c); px(tx + 1, 1, 2, 15, col.b);
+    for (let ty = 1 + f; ty < 16; ty += 2) px(tx, ty, 4, 1, col.c);
+    px(tx + (tx ? 3 : 0), 1, 1, 15, "#000");
+  }
+  px(3, 4, 10, 10, col.b); px(3, 4, 10, 1, col.a); px(3, 4, 1, 10, col.a); px(12, 4, 1, 10, col.c); px(3, 13, 10, 1, col.c);   // hull
+  px(5, 5, 6, 8, col.c);                                                                                                       // turret rim
+  const bw = stars >= 2 ? 3 : 2; px(8 - Math.ceil(bw / 2), stars >= 1 ? 0 : 1, bw, 7, col.a); px(8 - Math.ceil(bw / 2), 0, bw, 1, col.c);  // barrel
+  if (stars >= 3) { px(2, 3, 1, 2, col.a); px(13, 3, 1, 2, col.a); }
+  ctx.restore();
+  // number on the turret (not rotated, always readable)
+  // number: small dark digit on the light turret (turret stays visible); turret is centred so it does not need rotating
+  const d = DIGITS[id]; if (d) { ctx.fillStyle = col.a; ctx.fillRect(x + 6 * K, y + 6 * K, 5 * K, 7 * K); ctx.fillStyle = col.c;
+    d.forEach((row, r) => [...row].forEach((v, c) => { if (v === "1") ctx.fillRect(x + (7 + c) * K, y + (7 + r) * K, K, K); })); }
+  if (shield && Math.floor(now / 80) % 2) {        // spawn / helmet shield: flickering ring
+    ctx.strokeStyle = "#fcfcfc"; ctx.lineWidth = K; ctx.setLineDash([K * 2, K * 2]); ctx.lineDashOffset = (now / 40) % 8;
+    ctx.strokeRect(x + K / 2, y + K / 2, 2 * C - K, 2 * C - K); ctx.setLineDash([]);
+  }
+}
+
+// --- eagle (16x16), ruin when destroyed
+const EAGLE_BMP = ["................","..w..........w..",".ww....gg....ww.",".www..gggg..www.",".wwwwgggggwwwww.",".wwwwwggggwwwww.",
+  "..wwwwggggwwww..","...wwwggggwww...","....wwggggww....",".....ggddgg.....","....gggddggg....","...gg.gddg.gg...",
+  "..gg..gggg..gg..",".....gg..gg.....","....dddddddd....","................"];
+const RUIN_BMP = ["................","................","......g.........",".....gdg....g...","....gdddg..gdg..","...gdddddggdddg.",
+  "..gdddgdddddddg.","..gddgggddgdddd.",".gddgdddgdddgdg.",".gdddddgddddddg.","gddgdddddgdddddg","gdddddgddddgdddg",
+  "gddddddddddddddg","dddddddddddddddd","dddddddddddddddd","................"];
+function drawBmp(bmp, x, y, pal) { bmp.forEach((row, r) => [...row].forEach((ch, c) => { if (pal[ch]) { ctx.fillStyle = pal[ch]; ctx.fillRect(x + c * K, y + r * K, K, K); } })); }
+function drawEagle(e, side, hp, now) {
+  const x = e.x * C, y = e.y * C;
+  ctx.fillStyle = "#000"; ctx.fillRect(x, y, 2 * C, 2 * C);
+  if (hp <= 0) return drawBmp(RUIN_BMP, x, y, { g: "#bcbcbc", d: "#6c6c6c" });
+  const flash = e.invuln && Math.floor(now / 120) % 2;
+  drawBmp(EAGLE_BMP, x, y, { w: flash ? "#fcfcfc" : "#bcbcbc", g: flash ? "#fcfcfc" : "#8c8c8c", d: side === "bottom" ? "#e8b800" : "#30b840" });
+}
+
+// --- power-ups (16x16 framed icon, blinking)
+const ICON = {
+  star: ["......y.....",".....yyy....",".....yyy....","yyyyyyyyyyyy",".yyyyyyyyyy.","..yyyyyyyy..","...yyyyyy...","..yyyyyyyy..","..yyy..yyy..",".yyy....yyy.",".yy......yy.","............"],
+  helmet: ["............","....gggg....","..gggggggg..",".gggwwggggg.",".ggwwggggggg","gggwgggggggg","gggggggggggg","gggggggggggg","dddddddddddd",".dd......dd.","............","............"],
+  shovel: ["........ggg.",".......gwwg.","......gwwg..",".....gggg...","....bb......","...bb.......","..bb........","ggbb........","gwgg........","gwwg........",".gg.........","............"],
+  tank: ["............","....gggg....","....gggg....",".gg.gggg.gg.",".gggggggggg.",".gg.gwwg.gg.",".gg.gwwg.gg.",".gggggggggg.",".gg.gggg.gg.","............","............","............"],
+};
+function drawItem(it, now) {
+  if (Math.floor(now / 250) % 4 === 3) return;     // classic blink
+  const x = it.x * C, y = it.y * C;
+  ctx.fillStyle = "#fcfcfc"; ctx.fillRect(x + K, y + K, 14 * K, 14 * K);
+  ctx.fillStyle = "#3c3c3c"; ctx.fillRect(x + 2 * K, y + 2 * K, 12 * K, 12 * K);
+  drawBmp(ICON[it.kind] || ICON.star, x + 2 * K, y + 2 * K, { y: "#f8d800", g: "#bcbcbc", w: "#fcfcfc", d: "#6c6c6c", b: "#a06020" });
+}
+
+// --- explosions (spawned client-side when a bullet vanishes or a tank dies)
+let FX = [], prevBullets = [], prevAlive = {};
+function boom(cx, cy, big, now) { FX.push({ cx, cy, big, t0: now }); }
+function drawFx(now) {
+  FX = FX.filter(f => now - f.t0 < (f.big ? 650 : 300));
+  for (const f of FX) {
+    const p = (now - f.t0) / (f.big ? 650 : 300), r = (f.big ? 2.2 : 1.1) * C * (0.45 + 0.55 * Math.sin(Math.PI * Math.min(1, p * 1.2)));
+    const rays = f.big ? 12 : 8;
+    for (const [col, k] of [["#5c2c9c", 1], ["#d82800", 0.75], ["#f8d878", 0.45], ["#fcfcfc", 0.2]]) {
+      ctx.fillStyle = col; ctx.beginPath();
+      for (let i = 0; i < rays * 2; i++) { const a = (i / (rays * 2)) * Math.PI * 2 + f.t0, rr = (i % 2 ? 0.45 : 1) * r * k;
+        ctx.lineTo(f.cx + Math.cos(a) * rr, f.cy + Math.sin(a) * rr); }
+      ctx.closePath(); ctx.fill();
+    }
+  }
+}
+function trackFx(g, now) {
+  const cur = g.bullets.map(b => ({ ...b }));
+  for (const b of prevBullets) {
+    const still = cur.some(c => c.dir === b.dir && Math.abs(c.x - b.x) + Math.abs(c.y - b.y) < 6);
+    if (!still) { const d = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[b.dir] || [0, 0];
+      const vert = b.dir === "up" || b.dir === "down";
+      boom((b.x + d[0] + (vert ? 1 : 0.5)) * C, (b.y + d[1] + (vert ? 0.5 : 1)) * C, false, now); }
+  }
+  prevBullets = cur;
+  for (const t of g.tanks) { const k = t.side + t.id;
+    if (prevAlive[k] && prevAlive[k].alive && !t.alive) boom((prevAlive[k].x + 1) * C, (prevAlive[k].y + 1) * C, true, now);
+    prevAlive[k] = { alive: t.alive, x: t.x, y: t.y }; }
+}
+
+let lastGame = null, lastGameAt = 0;
+function draw(g) { if (g !== lastGame) { trackFx(g, performance.now()); lastGame = g; lastGameAt = performance.now(); } }
+function frame(now) {
+  requestAnimationFrame(frame);
+  const g = lastGame; if (!g) return;
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, cv.width, cv.height);
+  const rows = g.grid, wf = Math.floor(now / 500) % 2;
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-    const ch = rows[y][x]; if (ch === "." || ch === "%") continue;
-    ctx.fillStyle = COL[ch] || "#333"; ctx.fillRect(x * C, y * C, C, C);
-    if (ch === "#") { ctx.fillStyle = "#7a3a1c"; ctx.fillRect(x * C, y * C + C / 2 - 1, C, 2); ctx.fillRect(x * C + (y % 2 ? C / 2 : 0), y * C, 2, C / 2); }
-    if (ch === "@") { ctx.fillStyle = "#d7dde3"; ctx.fillRect(x * C + 3, y * C + 3, C - 6, C - 6); }
+    const ch = rows[y][x];
+    if (ch === "~") ctx.drawImage(WATER[(wf + ((x >> 1) + (y >> 1)) % 2) % 2], x * C, y * C);
+    else if (TILE[ch] && ch !== "%") ctx.drawImage(TILE[ch], x * C, y * C);
   }
-  for (const [side, e] of Object.entries(g.eagles)) {
-    const blink = e.invuln && Math.floor(Date.now() / 200) % 2;
-    ctx.fillStyle = blink ? "#fff" : side === "bottom" ? "#f2c14e" : "#4fb3e8";
-    ctx.fillRect(e.x * C + 2, e.y * C + 2, 2 * C - 4, 2 * C - 4);
-    ctx.font = `${C * 1.4}px serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("🦅", e.x * C + C, e.y * C + C + 1);
-  }
-  for (const it of g.items) { ctx.font = `${C * 1.5}px serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    if (Math.floor(Date.now() / 300) % 4) ctx.fillText(ITEM[it.kind] || "?", it.x * C + C, it.y * C + C + 1); }
+  for (const [side, e] of Object.entries(g.eagles)) drawEagle(e, side, g.base_hp[side], now);
+  for (const it of g.items) drawItem(it, now);
+  // tanks: interpolate between server snapshots for smooth motion
+  const live = g.status === "live", since = Math.min(1, (now - lastGameAt) / 120);
   for (const t of g.tanks) {
     if (!t.alive) continue;
-    const x = (t.to ? t.x + (t.to[0] - t.x) * t.p : t.x) * C, y = (t.to ? t.y + (t.to[1] - t.y) * t.p : t.y) * C;
-    const col = t.side === "bottom" ? "#f2c14e" : "#4fb3e8";
-    ctx.fillStyle = col; ctx.fillRect(x + 2, y + 2, 2 * C - 4, 2 * C - 4);
-    ctx.fillStyle = "#222"; ctx.fillRect(x + 7, y + 7, 2 * C - 14, 2 * C - 14);
-    ctx.strokeStyle = col; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(x + C, y + C);
-    const d = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[t.dir]; ctx.lineTo(x + C + d[0] * (C + 1), y + C + d[1] * (C + 1)); ctx.stroke();
-    ctx.fillStyle = "#fff"; ctx.font = `bold ${C - 2}px system-ui`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(t.id, x + C, y + C + 1);
-    if (t.shield) { ctx.strokeStyle = "rgba(255,255,255,.8)"; ctx.lineWidth = 2; ctx.setLineDash([4, 3]); ctx.strokeRect(x, y, 2 * C, 2 * C); ctx.setLineDash([]); }
+    const p = t.to ? Math.min(1, t.p + (live ? since * 0.25 : 0)) : 0;
+    const x = (t.to ? t.x + (t.to[0] - t.x) * p : t.x) * C, y = (t.to ? t.y + (t.to[1] - t.y) * p : t.y) * C;
+    drawTank(Math.round(x), Math.round(y), t.dir, TANKCOL[t.side], t.id, t.stars, !!t.to, t.shield, now);
   }
-  for (const b of g.bullets) { const vert = b.dir === "up" || b.dir === "down";
+  for (const b of g.bullets) {                      // bullet: 3x4 NES px at the lane centre
+    const vert = b.dir === "up" || b.dir === "down";
     const bx = vert ? b.x * C + C : b.x * C + C / 2, by = vert ? b.y * C + C / 2 : b.y * C + C;
-    ctx.fillStyle = b.side === "bottom" ? "#ffe08a" : "#bfe8ff"; ctx.fillRect(bx - 3, by - 3, 6, 6); }
-  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (rows[y][x] === "%") { ctx.fillStyle = "rgba(47,125,50,.88)"; ctx.fillRect(x * C, y * C, C, C); }
-  ctx.strokeStyle = "rgba(255,255,255,.12)"; ctx.setLineDash([6, 6]); ctx.beginPath(); ctx.moveTo(0, 21 * C); ctx.lineTo(N * C, 21 * C); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = PAL.bullet; ctx.fillRect(Math.round(bx - (vert ? 1.5 : 2) * K), Math.round(by - (vert ? 2 : 1.5) * K), (vert ? 3 : 4) * K, (vert ? 4 : 3) * K);
+  }
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (rows[y][x] === "%") ctx.drawImage(TILE["%"], x * C, y * C);  // bushes hide tanks
+  drawFx(now);
 }
+requestAnimationFrame(frame);
 
 route();
 </script>
