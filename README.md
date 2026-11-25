@@ -190,7 +190,7 @@ python .claude\skills\battle-city-online\scripts\bco.py run ABCD --strategy adap
 |---|---|---|
 | Bot Khó, mốc 20000 điểm | 7/8 | 1,55 |
 | Bot Vừa, mốc 20000 điểm | 4/4 | 3,4 |
-| Bot Khó, mốc 100000 điểm (phải phá nhà hoặc hết giờ) | 8/8 | 1,2 |
+| Bot Khó, mốc 100000 điểm (phải phá nhà hoặc hết giờ) | 8/8 | 1,33 |
 
 Chạy trên server này đã bắt được và sửa các lỗi: tự bắn trúng nhà mình, tự phá tường nhà mình bằng `move_fire`,
 lệnh bị từ chối vì hàng chờ bị dồn đôi.
