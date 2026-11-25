@@ -183,6 +183,18 @@ python .claude\skills\battle-city-online\scripts\bco.py run ABCD --strategy adap
 - **Cấu hình phòng** (chủ phòng, trước trận): tua nhanh, thời gian trận, giáp, số xe, số mạng, máu căn cứ, mốc điểm, tốc độ xe/đạn, bản đồ.
   Tài khoản và token lưu ở `server/data/users.json` (đã nằm trong `.gitignore`).
 
+### Đo sức mạnh skill trên server này
+Đo bằng runner của skill (`adaptive`) đấu bot, trận đầy đủ 8:00 đồng hồ game (tua nhanh ×4):
+
+| Đối thủ | Thắng | Hạ / bị hạ |
+|---|---|---|
+| Bot Khó, mốc 20000 điểm | 7/8 | 1,55 |
+| Bot Vừa, mốc 20000 điểm | 4/4 | 3,4 |
+| Bot Khó, mốc 100000 điểm (phải phá nhà hoặc hết giờ) | 8/8 | 1,2 |
+
+Chạy trên server này đã bắt được và sửa các lỗi: tự bắn trúng nhà mình, tự phá tường nhà mình bằng `move_fire`,
+lệnh bị từ chối vì hàng chờ bị dồn đôi.
+
 ### Khác biệt có thể có so với server thật
 Các con số và tên trường dưới đây là đoán, chỉnh được trong `server/engine.py` (lớp `Config` và hàm `state_for`):
 tên trường JSON của `state` và sự kiện, định dạng phản hồi `/plan`, tốc độ xe (3 ô/s) và đạn (9 ô/s, 1 sao 13,5 ô/s), cách xe xử lý khi bị xe khác chắn

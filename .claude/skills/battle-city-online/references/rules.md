@@ -105,6 +105,8 @@ nửa sân nhà, nhặt đồ gần đường, nhà còn 2 máu thì rút hết 
 | `hold` | Đứng yên (vẫn bắn cơ hội). |
 
 ## Phản xạ (mọi vai, mỗi nhịp 0,5s, trước việc của vai)
+Mọi phát bắn vào xe địch đều **bỏ qua làn mà phía sau mục tiêu là đại bàng ta** (bắn trượt thì đạn bay tiếp vào nhà mình), và
+bắn **ít nhất 2 viên** (đạn hai bên gặp nhau thì triệt tiêu, viên sau mới quyết định).
 1. **Bắn ngay**: xe địch thẳng làn, không gạch, ≤18 ô (`fire_range`), không có khiên → huỷ việc, bắn.
 2. **Bắn đón**: xe địch đang chạy cắt ngang một làn của ta, ≤14 ô → bắn vào chỗ nó sẽ tới
    (vận tốc ước lượng từ các nhịp trước; `bullet_cells_per_s`, `reaction_latency_s` trong state-schema.json).
@@ -112,7 +114,9 @@ nửa sân nhà, nhặt đồ gần đường, nhà còn 2 máu thì rút hết 
    (vừa bắn, giãn cách 0,6s) → `stop` rồi dạt ngang ra ô trống gần nhất không nằm trong làn địch nào.
    Bị kẹp hai bên không né được → bắn trả ngay.
 Đang giáp, vai vây (`siege*`, `rush`) tự chuyển sang `stage`, trừ xe ⭐3.
-Tìm đường né các làn bắn hiện tại của xe địch (`danger_penalty` trong schema, 0 để tắt).
+Tìm đường né các làn bắn hiện tại của xe địch (`danger_penalty` trong schema, mặc định 8, 0 để tắt) và **không phá tường quanh
+đại bàng ta** bằng `move_fire` (+80 chi phí; chỉ đi qua khi không còn đường khác).
+`hunt` chọn mục tiêu theo **đường đi thực tế** tới chỗ bắn được (xét 3 xe địch gần nhất), không theo khoảng cách chim bay.
 
 ## Hàng rào đạn (2 xe địch quay mặt vào nhau bắn liên tục)
 Đạn đồng đội không gây sát thương, nên địch có thể đặt 2 xe ở hai đầu một hàng (hoặc cột), quay nòng vào nhau và bắn liên tục.
@@ -148,8 +152,10 @@ Bị từ chối 3 lần liền → **lùi 1-2 ô theo hướng ngược ô bị
 
 ## Chiến thuật
 - **scripted**: làm đúng chiến thuật người dùng viết — file `plan.json` gồm vai từng xe + luật đổi vai (xem SKILL.md mục 5). Sửa file giữa trận là có hiệu lực ở nhịp sau.
-- **adaptive**: bị đánh hai hông → `[siege×2, guard_left, guard_right]` (nhà ≤2 máu: `[siege, guard_left, guard_right, defend]`);
-  có hàng rào → thêm `breaker`; giáp → `[collect, stage, hunt, defend]` (xe ⭐3 chuyển sang `siege`); hết giáp → `[siege×3, defend]`;
+- **adaptive**: trong giáp → `[hunt+collect, collect, hunt+collect, hunt+collect]` (đại bàng đang bọc thép nên kiếm điểm bằng hạ xe
+  và vật phẩm; có xe địch ⭐3 thì xe 4 về `defend`), ~25 giây cuối giáp → 2 xe chiếm sẵn vị trí bắn đại bàng (`stage_before_s`);
+  bị đánh hai hông → `[siege×2, guard_left, guard_right]` (nhà ≤2 máu: `[siege, guard_left, guard_right, defend]`);
+  có hàng rào → thêm `breaker`; xe ⭐3 trong giáp → `siege` (phá được thép); hết giáp → `[siege×3, defend]`;
   đại bàng địch ≤2 máu → tất cả `siege`; nhà ta ≤2 máu hoặc ≥2 xe địch sang sân ta → `[siege×2, defend×2]`;
   cuối trận (≤90s game) dẫn ≥1500 → `[defend×3, hunt]`; cuối trận đang thua → tất cả `siege`.
 - **siege** (`defenders=1`), **rush**, **hunter** (`pair=true` để 2 xe một mục tiêu), **fortress** (`hunters=1`, `fire_bricks=1`),

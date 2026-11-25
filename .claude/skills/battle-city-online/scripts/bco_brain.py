@@ -157,7 +157,7 @@ def penalties_for(game, tank, memory=None):
     blocked a move (order_failed), and fence lanes (unless we are shielded)."""
     s, pen = game.tank_size, {}
     memory = memory if memory is not None else {}
-    danger_w = game.schema.get("danger_penalty", 3)
+    danger_w = game.schema.get("danger_penalty", 8)
     if danger_w:
         for a, n in danger_lanes(game).items():
             pen[a] = danger_w * n
@@ -234,7 +234,8 @@ def opportunistic_fire(game, tank, memory, max_bricks=0, max_range=18, allow_bas
                 and not own_eagle_in_line(game, tank.pos, d, star3(tank)):
             score = 100 - hit["dist"]
             if best is None or score > best[0]:
-                best = (score, d, hit["bricks"] + 1 + (1 if hit["dist"] > 10 else 0), f"bắn xe địch {hit['obj'].id}")
+                # ≥2 bullets: head-on bullets cancel each other, the follow-up one decides the duel
+                best = (score, d, hit["bricks"] + 2 + (1 if hit["dist"] > 8 else 0), f"bắn xe địch {hit['obj'].id}")
         elif (allow_base and hit["kind"] == "enemy_base" and hit["bricks"] <= 2
               and game.in_enemy_half(tank.y) and eagle_vulnerable(game, memory)):
             best = (1000, d, 3, "bắn đại bàng")
@@ -472,21 +473,31 @@ def stage(game, tank, memory, taken=None, prefer=None):
 
 
 def hunt(game, tank, memory, target=None):
+    """Săn xe: pick the enemy whose nearest firing spot is cheapest to reach (real path cost, not
+    straight-line distance), go there and fire 2+ bullets on arrival."""
     enemies = [e for e in game.alive_tanks(False) if not e.shield] or game.alive_tanks(False)
     if not enemies:
         return None
-    target = target or min(enemies, key=lambda e: abs(e.x - tank.x) + abs(e.y - tank.y))
-    axis = fence_post(memory, target)  # fence post faces along its row → come at it along its column
-    only = {"row": "col", "col": "row"}.get(axis)
-    spots, prev = firing_spots(game, tank, target.pos, "enemy", memory, max_bricks=1, min_dist=2, only_axis=only)
-    if not spots:
+    candidates = [target] if target else sorted(enemies, key=lambda e: abs(e.x - tank.x) + abs(e.y - tank.y))[:3]
+    best = None
+    for e in candidates:
+        axis = fence_post(memory, e)  # fence post faces along its row → come at it along its column
+        only = {"row": "col", "col": "row"}.get(axis)
+        spots, prev = firing_spots(game, tank, e.pos, "enemy", memory, max_bricks=1, min_dist=2, only_axis=only)
+        if spots:
+            # weaker targets first: fewer lives left is a sooner win for the "all lives lost" condition too
+            score = spots[0][0] + (2 if isinstance(e.lives, (int, float)) and e.lives > 5 else 0)
+            if best is None or score < best[0]:
+                best = (score, e, spots[0], prev)
+    if not best:
         return None
-    _, spot, d, bricks = spots[0]
+    _, target, (_, spot, d, bricks), prev = best
+    count = bricks + 2
     if tank.pos == spot:
-        return Decision(job=f"hunt_fire:{target.id}", steps=[fire_step(d, bricks + 1)], urgent=True)
+        return Decision(job=f"hunt_fire:{target.id}", steps=[fire_step(d, count)], urgent=True)
     # target moves: label by target + coarse area so we re-plan when it relocates
     return go_to(game, tank, spot, prev, f"hunt:{target.id}@{target.x // 6},{target.y // 6}",
-                 max_steps=3, then=fire_step(d, bricks + 1))
+                 max_steps=3, then=fire_step(d, count))
 
 
 def break_fence(game, tank, memory, taken_posts=None):
@@ -950,7 +961,15 @@ class Adaptive(Strategy):
         invaders = sum(1 for e in game.alive_tanks(False) if game.in_my_half(e.y))
 
         if game.armor_active:
-            return "armor", (["collect", "stage", "hunt", "defend"] if n >= 4 else ["collect", "stage", "defend"])[:n] or ["hunt"]
+            # armor = eagles closed: score with kills (+500) and items (+200, stars), keep one at home;
+            # only in the last ~25 game-seconds move attackers to their firing spots
+            late = game.armor_left is not None and game.armor_left <= self.p("stage_before_s", 25)
+            if late:
+                return "armor_end", (["stage", "stage", "hunt+collect", "defend"] if n >= 4 else ["stage", "defend", "hunt"])[:n]
+            # the eagle is armored: a home guard only matters once an enemy has 3 stars (breaks the steel)
+            guard = any((e.stars or 0) >= 3 for e in game.alive_tanks(False))
+            roles = ["hunt+collect", "collect", "hunt+collect", "defend" if guard else "hunt+collect"]
+            return "armor", roles[:n] or ["hunt"]
         if en_hp is not None and en_hp <= 2:
             return "finish_eagle", ["siege"] * n
         if endgame and lead >= self.p("lead_margin", 1500):
@@ -1244,6 +1263,7 @@ class Commander:
         self.client, self.code, self.strategy = client, code, strategy
         self.dry_run, self.refresh_s, self.min_fire_gap = dry_run, refresh_s, min_fire_gap
         self.inline_stop = inline_stop
+        self.pending_window_s = 1.2   # tick 0.5s + network; overridable
         self.last_response = None
         self.memory = {}          # team memory shared by strategies (eagle timing, caches...)
         self.tanks = {}           # per tank: job, sent_at, fire_at, rejects, pos
@@ -1335,12 +1355,15 @@ class Commander:
             changed = dec.job != tm["job"]
             idle = tank.busy is False
             stale = game.now - tm["sent_at"] > self.refresh_s
-            had_plan = tank.busy or (tank.busy is None and tm["sent_at"] > -1e9)
+            # orders apply at the next 0.5s tick, so right after a send the state can still show the tank
+            # idle: treat it as busy for a moment, or a new plan would be appended to the pending one
+            had_plan = (tank.busy or (tank.busy is None and tm["sent_at"] > -1e9)
+                        or game.now - tm["sent_at"] < self.pending_window_s)
             send, out = False, []
             fires = any(st.get("do") == "fire" for st in dec.steps)
             if dec.urgent:
                 send = not fires or game.now - tm["fire_at"] >= self.min_fire_gap
-            elif dec.steps and (changed or idle or stale):
+            elif dec.steps and (changed or (idle and game.now - tm["sent_at"] >= self.pending_window_s) or stale):
                 send = True
             elif not dec.steps and changed and tm["job"] and had_plan:
                 out = [{"tank": tid, "do": "stop"}]   # switching to "hold": clear the old plan

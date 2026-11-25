@@ -15,6 +15,7 @@ import secrets
 import string
 import threading
 import time
+import traceback
 from collections import deque
 from dataclasses import fields
 from datetime import datetime
@@ -138,9 +139,15 @@ def tick_loop():
                     room.countdown_until = None
                     g.start()
                 if g.status == "live":
-                    g.step(dt * room.cfg.time_scale)
-                    if room.bot:
-                        room.bot.tick()
+                    try:
+                        g.step(dt * room.cfg.time_scale)
+                        if room.bot:
+                            room.bot.tick()
+                    except Exception:  # one broken match must never freeze the other rooms
+                        traceback.print_exc()
+                        g.status, g.reason = "finished", "lỗi server (xem log) — trận bị huỷ"
+                        g.winner = g.winner or "bottom"
+                        g.emit({"type": "match_finished", "winner": None, "reason": g.reason, "text": "Trận bị huỷ do lỗi server"})
                     if g.status == "finished":
                         room.history.append({"winner": room.players[g.winner], "side": g.winner, "reason": g.reason,
                                              "score": dict(g.score), "map": g.map_name,

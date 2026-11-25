@@ -264,6 +264,8 @@ class Bullet:
     speed: float
     pierce_steel: bool
     shooter_y: int
+    shooter_x: int = 0
+    doing: str = ""
     dead: bool = False
 
 
@@ -303,6 +305,7 @@ class Game:
         self.pending = {"top": [], "bottom": []}   # orders waiting for the next command tick
         self.events = []                            # (seq, t, side_or_None, dict)
         self.seq = 0
+        self.friendly_fire = []                     # own-eagle hits, for diagnosis
         self.ring = {s: self._ring_cells(s) for s in ("top", "bottom")}
         self._set_ring("top", "@")
         self._set_ring("bottom", "@")
@@ -501,7 +504,7 @@ class Game:
             if t.move_progress >= 1.0:
                 t.x, t.y = t.moving_to
                 t.moving_to, t.move_progress = None, 0.0
-                if t.plan and t.plan[0]["do"] in ("move", "move_fire"):
+                if t.plan and t.plan[0]["do"] in ("move", "move_fire") and "_cells_left" in t.plan[0]:
                     t.plan[0]["_cells_left"] -= 1
                     if t.plan[0]["_cells_left"] <= 0:
                         t.plan.pop(0)
@@ -525,6 +528,8 @@ class Game:
             limit = 2 if t.stars >= 2 else 1
             if t.fire_cooldown <= 0 and sum(1 for b in self.bullets if b.side == t.side and b.tank_id == t.id) < limit:
                 self._shoot(t, d)
+                if not t.plan or t.plan[0] is not st:   # point-blank eagle hit sent the tank home (plan cleared)
+                    return
                 t.fired_in_step += 1
                 if t.fired_in_step >= st.get("count", 1):
                     t.plan.pop(0)
@@ -567,7 +572,8 @@ class Game:
         # bullet lane origin: the 2-wide strip just in front of the tank
         bx = t.x + (S if dx > 0 else -1 if dx < 0 else 0)
         by = t.y + (S if dy > 0 else -1 if dy < 0 else 0)
-        b = Bullet(t.side, t.id, float(bx), float(by), d, speed, t.stars >= 3, t.y)
+        b = Bullet(t.side, t.id, float(bx), float(by), d, speed, t.stars >= 3, t.y, t.x,
+                   t.plan[0]["do"] if t.plan else t.doing)
         self.bullets.append(b)
         self._bullet_hit(b)   # the cell right in front of the barrel counts too (point-blank bricks)
         t.fire_cooldown = 0.15
@@ -660,6 +666,8 @@ class Game:
         shooter = self.tank(b.side, b.tank_id)
         if b.side == side and shooter:
             shooter.own_eagle_hits += 1
+            self.friendly_fire.append({"t": round(self.clock_elapsed, 1), "side": side, "tank": shooter.id,
+                                       "from": [b.shooter_x, b.shooter_y], "dir": b.dir, "doing": b.doing})
         if b.side != side and shooter:  # hitting the enemy eagle always sends the shooter home
             shooter.eagle_hits += 1
             self._send_home(shooter)
@@ -822,7 +830,7 @@ class Game:
             "bullets": [{"x": round(b.x, 2), "y": round(b.y, 2), "dir": b.dir, "side": b.side} for b in self.bullets],
             "items": [{"kind": i.kind, "x": i.x, "y": i.y} for i in self.items],
             "events": [e for _, _, to, e in self.events[-40:] if to is None],
-            "winner": self.winner, "reason": self.reason,
+            "winner": self.winner, "reason": self.reason, "friendly_fire": self.friendly_fire[-20:],
         }
 
 

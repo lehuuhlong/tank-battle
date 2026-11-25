@@ -297,7 +297,7 @@ async function showResult(room, game) {
   const w = game.winner;
   $("#resTitle").innerHTML = `<span style="color:${w === "bottom" ? "var(--gold)" : "var(--blue)"}">${esc(room.players[w] || "")}</span> thắng`;
   $("#resReason").textContent = `${game.reason} · ${game.score.bottom} – ${game.score.top}`;
-  const rows = game.tanks.sort((a, b) => (a.side > b.side ? 1 : -1) || a.id - b.id).map(t =>
+  const rows = game.tanks.slice().sort((a, b) => a.side === b.side ? a.id - b.id : a.side === "bottom" ? -1 : 1).map(t =>
     `<tr><td style="color:${t.side === "bottom" ? "var(--gold)" : "var(--blue)"}">Xe ${t.id} ${SIDE_VI[t.side]}</td><td>${t.kills}</td><td>${t.deaths}</td><td>${t.items}</td><td>${t.eagle_hits}</td><td style="color:${t.own_eagle_hits ? "var(--red)" : "inherit"}">${t.own_eagle_hits}</td><td>${t.idle_s}s</td></tr>`).join("");
   $("#resTable").innerHTML = `<table><thead><tr><th>Xe</th><th>Hạ</th><th>Bị hạ</th><th>Vật phẩm</th><th>Trúng nhà địch</th><th>Bắn nhà mình</th><th>Đứng không việc</th></tr></thead><tbody>${rows}</tbody></table>
     <p class="muted" style="font-size:12px">"Đứng không việc" cao = vòng lặp agent chậm hoặc quên giao việc.</p>`;
