@@ -161,8 +161,9 @@ BULLET_THROUGH = {"empty", "tree", "ice", "water", "eagle"}
 class Grid:
     def __init__(self, rows, legend=None, unknown_as="empty"):
         legend = dict(legend or {".": "empty", "#": "brick", "@": "steel", "%": "tree", "~": "water", "-": "ice", " ": "empty"})
-        for ch in OVERLAY_CHARS:  # tanks / eagles drawn on the map sit on passable ground
+        for ch in OVERLAY_CHARS:  # tanks / eagles / bullets drawn on the map sit on passable ground
             legend.setdefault(ch, "empty")
+        legend.setdefault("x", "steel")  # destroyed base
         # A power-up (P) is drawn over whatever is below it, often brick. Unknown ground = "item_cell":
         # treated like brick (approach with move_fire, counts as a brick for bullets) until the
         # runner fills it in from terrain remembered in earlier cycles.
@@ -323,25 +324,27 @@ OPPOSITE = {"top": "bottom", "bottom": "top"}
 # Candidate paths tried (in order) when the schema leaves a key null.
 CANDIDATES = {
     "status": ["status", "state", "phase", "match.status", "match.state"],
-    "time_left": ["time_left", "timeLeft", "remaining", "clock", "time", "game_time_left", "match.time_left", "timer"],
-    "armor_left": ["armor_left", "armorLeft", "armor", "shield_left", "base_armor", "armor_time_left", "match.armor_left"],
+    "time_left": ["time_left_s", "time_left", "timeLeft", "remaining", "clock", "time", "game_time_left", "match.time_left", "timer"],
+    "armor_left": ["bases_open_in_s", "armor_left", "armorLeft", "armor", "shield_left", "base_armor", "armor_time_left", "match.armor_left"],
     "my_tanks": ["my_tanks", "myTanks", "you.tanks", "me.tanks", "self.tanks", "mine.tanks", "ally.tanks",
                  "allies", "tanks.mine", "tanks.my", "tanks.you", "tanks.{me}", "players.{me}.tanks", "sides.{me}.tanks", "{me}.tanks"],
     "enemy_tanks": ["enemy_tanks", "enemyTanks", "enemy.tanks", "opponent.tanks", "enemies", "foe.tanks",
                     "tanks.enemy", "tanks.opponent", "tanks.{enemy}", "players.{enemy}.tanks", "sides.{enemy}.tanks", "{enemy}.tanks"],
     "all_tanks": ["tanks", "units"],
-    "my_base_hp": ["my_base_hp", "you.base_hp", "you.base.hp", "me.base.hp", "you.eagle_hp", "you.eagle.hp",
+    "my_base_hp": ["bases.yours.hp", "my_base_hp", "you.base_hp", "you.base.hp", "me.base.hp", "you.eagle_hp", "you.eagle.hp",
                    "bases.{me}.hp", "bases.{me}", "base_hp.{me}", "eagles.{me}.hp", "eagles.{me}", "{me}.base.hp", "{me}.base_hp"],
-    "enemy_base_hp": ["enemy_base_hp", "enemy.base_hp", "enemy.base.hp", "opponent.base.hp", "enemy.eagle_hp", "enemy.eagle.hp",
+    "enemy_base_hp": ["bases.opponent.hp", "enemy_base_hp", "enemy.base_hp", "enemy.base.hp", "opponent.base.hp", "enemy.eagle_hp", "enemy.eagle.hp",
                       "bases.{enemy}.hp", "bases.{enemy}", "base_hp.{enemy}", "eagles.{enemy}.hp", "eagles.{enemy}", "{enemy}.base.hp", "{enemy}.base_hp"],
     "my_score": ["my_score", "you.score", "me.score", "score.{me}", "scores.{me}", "score.you", "score.me", "{me}.score"],
     "enemy_score": ["enemy_score", "enemy.score", "opponent.score", "score.{enemy}", "scores.{enemy}", "score.enemy", "score.opponent", "{enemy}.score"],
+    "enemy_base_info": ["bases.opponent", "bases.{enemy}"],
+    "my_base_info": ["bases.yours", "bases.{me}"],
     "events": ["events", "new_events", "log", "recent_events"],
-    "items": ["items", "powerups", "power_ups", "bonuses", "pickups"],
+    "items": ["powerups", "items", "power_ups", "bonuses", "pickups"],
     "map": ["map", "ascii", "ascii_map", "board", "grid", "map.ascii", "map.rows"],
     "my_side": ["my_side", "side", "you.side", "me.side", "you", "your_side"],
-    "my_base_pos": ["you.base", "you.eagle", "me.base", "my_base", "bases.{me}", "eagles.{me}", "base.{me}", "eagle.{me}", "{me}.base", "{me}.eagle"],
-    "enemy_base_pos": ["enemy.base", "enemy.eagle", "opponent.base", "enemy_base", "bases.{enemy}", "eagles.{enemy}", "base.{enemy}", "eagle.{enemy}", "{enemy}.base", "{enemy}.eagle"],
+    "my_base_pos": ["bases.yours", "you.base", "you.eagle", "me.base", "my_base", "bases.{me}", "eagles.{me}", "base.{me}", "eagle.{me}", "{me}.base", "{me}.eagle"],
+    "enemy_base_pos": ["bases.opponent", "enemy.base", "enemy.eagle", "opponent.base", "enemy_base", "bases.{enemy}", "eagles.{enemy}", "base.{enemy}", "eagle.{enemy}", "{enemy}.base", "{enemy}.eagle"],
 }
 LIVE_STATUSES = {"live", "playing", "running", "in_progress", "started", "active"}
 WAIT_STATUSES = {"scheduled", "waiting", "pending", "lobby", "ready", "countdown", "starting"}
@@ -442,7 +445,7 @@ def parse_pos(d, fmap):
         elif isinstance(p, str) and re.fullmatch(r"\s*\d+\s*[,: ]\s*\d+\s*", p):
             x, y = map(int, re.split(r"[,: ]+", p.strip()))
     try:
-        return int(x), int(y)
+        return int(round(float(x))), int(round(float(y)))
     except (TypeError, ValueError):
         return None
 
@@ -496,7 +499,8 @@ class Tank:
             return None
         o = self.order
         if o in (None, "", [], {}, False):
-            return False
+            nxt = self.raw.get("next") if isinstance(self.raw, dict) else None
+            return bool(nxt)  # real server: "order" = current step, "next" = queued steps
         if isinstance(o, str) and o.lower() in ("idle", "none", "null"):
             return False
         return True
@@ -529,6 +533,8 @@ class Game:
     items: list = field(default_factory=list)
     my_base: tuple = None
     enemy_base: tuple = None
+    enemy_base_open: bool = None     # from bases.opponent.invulnerable (None = unknown → use timers)
+    my_base_open: bool = None
     tank_size: int = 2
     enemy_half_bound: dict = field(default_factory=dict)
     schema: dict = field(default_factory=dict, repr=False)
@@ -645,7 +651,7 @@ def detect_side(match_info):
 
 
 # ---------------------------------------------------------------- main entry
-OVERLAY_CHARS = "123456789OHTP"
+OVERLAY_CHARS = "123456789OHTPNx*"
 
 
 def map_entities(rows, s=2):
@@ -664,7 +670,7 @@ def map_entities(rows, s=2):
                         seen.add((x + i, y + j))
             if ch.isdigit():
                 out["mine"].append((int(ch), x, y))
-            elif ch == "O":
+            elif ch in "ON":  # O = opponent tank, N = NPC tank (hostile)
                 out["enemy"].append((x, y))
             elif ch == "H":
                 out["my_base"] = out["my_base"] or (x, y)
@@ -817,6 +823,16 @@ def normalize(state, my_side=None, schema=None):
                     if grid.at(x, y) == "brick":
                         grid.cells[y][x] = "steel"
 
+
+    def base_open(key):
+        v, _ = resolve(state, key, schema, my_side, found)
+        if not isinstance(v, dict):
+            return None
+        if v.get("alive") is False:
+            return False
+        inv = v.get("invulnerable")
+        return None if inv is None else not bool(inv)
+
     st_val = status if not isinstance(status, dict) else pick(status, ["status", "state", "phase"])
     return Game(
         my_side=my_side, grid=grid, my_tanks=my_tanks, enemy_tanks=enemy_tanks,
@@ -826,6 +842,7 @@ def normalize(state, my_side=None, schema=None):
         my_score=num("my_score"), enemy_score=num("enemy_score"),
         events=events if isinstance(events, list) else [], items=items,
         my_base=my_base, enemy_base=enemy_base, tank_size=s,
+        enemy_base_open=base_open("enemy_base_info"), my_base_open=base_open("my_base_info"),
         enemy_half_bound=schema.get("enemy_half") or {"bottom_max_y": (H - s) // 2 - 1, "top_min_y": (H - s) // 2 + 1},
         schema=schema, found=found, warnings=warnings, raw=state,
     )

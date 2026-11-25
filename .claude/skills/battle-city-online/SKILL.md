@@ -36,7 +36,8 @@ Dữ liệu từng trận nằm trong `./bco-data/<CODE>/`: match.json, rules.js
 1. `bco.py info CODE` — **gọi ngay**, vì nút Sẵn sàng của người dùng chỉ bật khi agent đã gọi API cho phòng.
    Lệnh này in ra bạn ở bên `top` hay `bottom`. Không đoán được thì đọc `bco-data/CODE/match.json` và dùng `--side` ở các bước sau.
 2. `bco.py rules CODE` — chỉ đọc một lần. Nếu **luật trận khác skill thì tin luật trận**. Số liệu khác mặc định (thời gian, giáp, ranh giới nửa sân) thì sửa trong `references/state-schema.json`.
-3. **Lần đầu dùng với server thật**, khi `state-schema.json` còn toàn `null`:
+3. `state-schema.json` **đã điền theo JSON thật** của server. Chỉ khi `bco.py state CODE --summary` in cảnh báo (`!`)
+   hoặc server đổi định dạng mới cần dò lại:
    - chạy `bco.py state CODE`, rồi `bco.py probe bco-data/CODE/state-latest.json --side <bên>`;
    - trường nào chưa tìm thấy thì đọc mục Tài liệu API trên trang Hướng dẫn của game và điền vào `state-schema.json` (`--write` tự ghi các trường đã dò được);
    - bản đồ có ký tự lạ thì thêm vào `legend`;

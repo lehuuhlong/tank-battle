@@ -204,7 +204,10 @@ def paths_from(game, tank, memory=None, max_cost=None):
 
 
 def eagle_vulnerable(game, memory):
-    """Time-based check only; armor/post-hit steel walls are in the map and stop bullets in trace()."""
+    """Can a hit on the enemy eagle count right now? The real state says it directly
+    (bases.opponent.invulnerable); otherwise fall back to the 5s timer after our last hit."""
+    if game.enemy_base_open is not None:
+        return game.enemy_base_open
     inv = game.schema.get("eagle_invulnerable_s", 5.0)
     return game.now - memory.get("last_eagle_hit", -1e9) > inv + 0.4
 
@@ -1300,7 +1303,7 @@ class Commander:
         for y, row in enumerate(g.rows):
             for x, ch in enumerate(row):
                 if ch in OVERLAY_CHARS:
-                    if g.cells[y][x] == "item_cell" and (x, y) in self.terrain:
+                    if ch in "P*" and (x, y) in self.terrain:  # power-up / bullet drawn over the real cell
                         g.cells[y][x] = self.terrain[(x, y)]
                 elif g.cells[y][x] != "eagle":
                     self.terrain[(x, y)] = g.cells[y][x]

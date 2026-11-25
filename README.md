@@ -127,13 +127,10 @@ Chơi tới khi trận kết thúc. Không dừng, không hỏi lại giữa tr�
 | `collector` | Ưu tiên nhặt vật phẩm, ⭐ trước |
 | `balanced` | Tự xếp vai theo thứ tự xe |
 
-## Trận đầu tiên với server thật
-Tên các trường trong `state` chưa được điền sẵn; script đang tự dò theo các tên thường gặp. Ở trận đầu, tốt nhất là phòng Luyện tập với bot:
-1. agent chạy `bco.py probe`;
-2. đối chiếu với mục **Tài liệu API** trên trang Hướng dẫn của game;
-3. điền vào `references/state-schema.json`.
-
-Chỉ cần làm một lần.
+## Định dạng state của server thật
+`references/state-schema.json` đã điền theo JSON thật của `GET /state?map=true` (`time_left_s`, `bases_open_in_s`,
+`you`/`opponent`, `bases.yours`/`bases.opponent`, `powerups`, `events`…), xem bảng trong `references/rules.md`.
+Nếu server đổi định dạng, chạy `bco.py probe <file state>` để xem trường nào không còn khớp.
 
 ## Server luyện tập (tự dựng)
 Trong giải đấu, phòng luyện tập trên server thật bị đóng. Thư mục `server/` là một bản mô phỏng chạy trên máy bạn: cùng HTTP API
@@ -196,7 +193,7 @@ Chạy trên server này đã bắt được và sửa các lỗi: tự bắn tr
 lệnh bị từ chối vì hàng chờ bị dồn đôi.
 
 ### Khác biệt có thể có so với server thật
-Các con số và tên trường dưới đây là đoán, chỉnh được trong `server/engine.py` (lớp `Config` và hàm `state_for`):
-tên trường JSON của `state` và sự kiện, định dạng phản hồi `/plan`, tốc độ xe (3 ô/s) và đạn (9 ô/s, 1 sao 13,5 ô/s), cách xe xử lý khi bị xe khác chắn
+`GET /state` trả **đúng định dạng của server thật** (theo JSON mẫu từ tank.recoff.cloud). Các phần còn đoán, chỉnh được trong
+`server/engine.py` (lớp `Config` và hàm `state_for`): định dạng sự kiện lệnh thất bại và phản hồi `/plan`, cấu trúc `bullets[]`, tốc độ xe (3 ô/s) và đạn (9 ô/s, 1 sao 13,5 ô/s), cách xe xử lý khi bị xe khác chắn
 (chờ 1 giây rồi báo lỗi), hiệu ứng băng, vị trí xuất hiện vật phẩm, giới hạn 15 lần gọi/giây, và 28 bản đồ còn lại.
 

@@ -301,6 +301,8 @@ class Handler(BaseHTTPRequestHandler):
             st, seq = g.state_for(side, room.cursor.get(user, 0), with_map)
             room.cursor[user] = seq
             st["code"] = room.code
+            if g.status == "finished":
+                st["note"] = f"room {room.code} is over (finished): it takes no more orders"
             if room.status == "countdown":
                 st["status"] = "scheduled"
                 st["starts_in"] = round(room.countdown_until - time.time(), 1)

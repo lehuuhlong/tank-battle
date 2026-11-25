@@ -275,6 +275,7 @@ class Item:
     x: int
     y: int
     until: float
+    id: int = 0
 
 
 # ----------------------------------------------------------------------------- game
@@ -290,6 +291,7 @@ class Game:
         self.status = "scheduled"
         self.winner = None
         self.reason = ""
+        self.reason_code = None
         self.score = {"top": 0, "bottom": 0}
         self.score_reached_at = {"top": 0.0, "bottom": 0.0}
         self.base_hp = {"top": cfg.base_hp, "bottom": cfg.base_hp}
@@ -305,6 +307,7 @@ class Game:
         self.pending = {"top": [], "bottom": []}   # orders waiting for the next command tick
         self.events = []                            # (seq, t, side_or_None, dict)
         self.seq = 0
+        self.item_seq = 0
         self.friendly_fire = []                     # own-eagle hits, for diagnosis
         self.ring = {s: self._ring_cells(s) for s in ("top", "bottom")}
         self._set_ring("top", "@")
@@ -476,8 +479,14 @@ class Game:
         c = t.x - 1 if dx < 0 else t.x + S
         return [(c, t.y + j) for j in range(S)]
 
+    def _completed(self, t, st, reason):
+        self.emit({"type": "order_completed", "tank": t.id, "order": order_str({k: v for k, v in st.items() if k != "_cells_left"}),
+                   "reason": reason,
+                   "steps_left": len(t.plan)}, to=t.side)
+
     def _fail(self, t, reason, cell):
-        self.emit({"type": "order_failed", "tank": t.id, "side": t.side, "reason": reason,
+        self.emit({"type": "order_failed", "tank": t.id, "side": t.side, "order": order_str(t.plan[0]) if t.plan else None,
+                   "reason": reason,
                    "cell": list(cell) if cell else None, "text": f"{self.name(t)}: lệnh thất bại — {reason}"}, to=t.side)
         t.plan.clear()
         t.fired_in_step = 0
@@ -507,7 +516,7 @@ class Game:
                 if t.plan and t.plan[0]["do"] in ("move", "move_fire") and "_cells_left" in t.plan[0]:
                     t.plan[0]["_cells_left"] -= 1
                     if t.plan[0]["_cells_left"] <= 0:
-                        t.plan.pop(0)
+                        self._completed(t, t.plan.pop(0), "arrived")
                 self._pickup(t)
             return
         if not t.plan:
@@ -519,7 +528,7 @@ class Game:
         if do == "turn":
             t.dir = st["direction"]
             t.doing = "xoay nòng"
-            t.plan.pop(0)
+            self._completed(t, t.plan.pop(0), f"facing {t.dir}")
             return
         if do == "fire":
             d = st.get("direction") or t.dir
@@ -532,7 +541,7 @@ class Game:
                     return
                 t.fired_in_step += 1
                 if t.fired_in_step >= st.get("count", 1):
-                    t.plan.pop(0)
+                    self._completed(t, t.plan.pop(0), "fired")
                     t.fired_in_step = 0
             return
         # move / move_fire
@@ -705,9 +714,11 @@ class Game:
                 if ok and not any(overlap(x, y, o.x, o.y) or overlap(x2, y2, o.x, o.y) for o in self.all_tanks()):
                     kind = self.rng.choice(ITEM_KINDS)
                     until = self.t + cfg.item_ttl_s
-                    self.items += [Item(kind, x, y, until), Item(kind, x2, y2, until)]
-                    self.emit({"type": "items_spawned", "kind": kind, "at": [[x, y], [x2, y2]],
-                               "text": f"Vật phẩm {ITEM_ICON[kind]} xuất hiện ở ({x},{y}) và ({x2},{y2})"})
+                    for ix, iy in ((x, y), (x2, y2)):
+                        self.item_seq += 1
+                        self.items.append(Item(kind, ix, iy, until, self.item_seq))
+                        self.emit({"type": "powerup_spawned", "id": self.item_seq, "powerup": kind, "x": ix, "y": iy,
+                                   "text": f"Vật phẩm {ITEM_ICON[kind]} xuất hiện ở ({ix},{iy})"})
                     break
 
     def _pickup(self, t):
@@ -725,7 +736,7 @@ class Game:
                     self._set_ring(t.side, "@")
                 elif it.kind == "tank":
                     t.lives += 1
-                self.emit({"type": "item_picked", "tank": t.id, "side": t.side, "kind": it.kind,
+                self.emit({"type": "powerup_picked", "id": it.id, "tank": t.id, "side": t.side, "powerup": it.kind,
                            "text": f"{self.name(t)} nhặt {ITEM_ICON[it.kind]}"})
 
     # ------------------------------------------------------------ end
@@ -733,31 +744,31 @@ class Game:
         cfg = self.cfg
         for s in ("top", "bottom"):
             if self.base_hp[s] <= 0:
-                return self._finish(OPP[s], f"phá căn cứ {SIDE_VI[s]}")
+                return self._finish(OPP[s], f"phá căn cứ {SIDE_VI[s]}", "base_destroyed")
         for s in ("top", "bottom"):
             if self.score[s] >= cfg.score_target:
-                return self._finish(s, f"đạt {cfg.score_target} điểm")
+                return self._finish(s, f"đạt {cfg.score_target} điểm", "score_limit")
         for s in ("top", "bottom"):
             if all(t.lives <= 0 and not t.alive for t in self.tanks[s]):
-                return self._finish(OPP[s], f"đội {SIDE_VI[s]} hết mạng")
+                return self._finish(OPP[s], f"đội {SIDE_VI[s]} hết mạng", "all_tanks_lost")
         if self.time_left <= 0:
             a, b = self.score["top"], self.score["bottom"]
             if a != b:
-                return self._finish("top" if a > b else "bottom", "hết giờ, nhiều điểm hơn")
+                return self._finish("top" if a > b else "bottom", "hết giờ, nhiều điểm hơn", "time_up")
             ra, rb = self.score_reached_at["top"], self.score_reached_at["bottom"]
             if ra != rb:
-                return self._finish("top" if ra < rb else "bottom", "bằng điểm, đạt điểm đó trước")
+                return self._finish("top" if ra < rb else "bottom", "bằng điểm, đạt điểm đó trước", "time_up_tiebreak")
             for key, why in ((lambda s: self.base_hp[s], "bằng điểm, căn cứ còn nhiều máu hơn"),
                              (lambda s: sum(t.lives for t in self.tanks[s]), "bằng điểm, còn nhiều mạng hơn"),
                              (lambda s: sum(t.enemy_half_s for t in self.tanks[s]), "bằng điểm, ở lâu hơn trong nửa sân đối phương")):
                 if key("top") != key("bottom"):
-                    return self._finish("top" if key("top") > key("bottom") else "bottom", why)
-            return self._finish(self.rng.choice(["top", "bottom"]), "bằng điểm, bốc thăm")
+                    return self._finish("top" if key("top") > key("bottom") else "bottom", why, "time_up_tiebreak")
+            return self._finish(self.rng.choice(["top", "bottom"]), "bằng điểm, bốc thăm", "time_up_tiebreak")
 
-    def _finish(self, winner, reason):
+    def _finish(self, winner, reason, code="finished"):
         self.status = "finished"
-        self.winner, self.reason = winner, reason
-        self.emit({"type": "match_finished", "winner": winner, "reason": reason,
+        self.winner, self.reason, self.reason_code = winner, reason, code
+        self.emit({"type": "match_finished", "winner": winner, "reason": reason, "reason_code": code,
                    "text": f"Hết trận! Đội {SIDE_VI[winner]} thắng ({reason})"})
 
     # ------------------------------------------------------------ views
@@ -772,8 +783,12 @@ class Game:
                         rows[y + j][x + i] = ch
         for it in self.items:
             paint(it.x, it.y, "P")
+        for b in self.bullets:
+            bx, by = int(b.x // 1), int(b.y // 1)
+            if 0 <= by < self.grid.h and 0 <= bx < self.grid.w:
+                rows[by][bx] = "*"
         for s, (ex, ey) in EAGLE.items():
-            paint(ex, ey, "H" if s == side else "T")
+            paint(ex, ey, "x" if self.base_hp[s] <= 0 else "H" if s == side else "T")
         for t in self.all_tanks():
             if t.alive:
                 paint(t.x, t.y, str(t.id) if t.side == side else "O")
@@ -797,22 +812,62 @@ class Game:
                 "tanks": [self.tank_json(t, mine) for t in self.tanks[s]]}
 
     def state_for(self, side, since_seq=0, with_map=True):
-        evs = [e for seq, _, to, e in self.events if seq > since_seq and (to is None or to == side)]
+        """GET /state in the real server's format (sample from tank.recoff.cloud, Nov 2026)."""
+        opp = OPP[side]
+
+        def ev_out(e):
+            e = {k: v for k, v in e.items() if k not in ("text", "t", "side") or (k == "side" and e.get("type") == "base_attacked")}
+            if e.get("type") == "match_finished":
+                e = {"type": "match_finished", "outcome": "you_won" if e.get("winner") == side else "you_lost",
+                     "reason": e.get("reason_code") or e.get("reason"), "your_score": self.score[side], "opponent_score": self.score[opp]}
+            return e
+
+        evs = []
+        for seq, t, to, e in self.events:
+            if seq > since_seq and (to is None or to == side):
+                evs.append({"seq": seq, **ev_out(e), "time_left_s": round(max(0.0, self.cfg.game_seconds - e.get("t", 0)))})
+
+        def tank(t, mine):
+            px = t.x + (t.moving_to[0] - t.x) * t.move_progress if t.moving_to else t.x
+            py = t.y + (t.moving_to[1] - t.y) * t.move_progress if t.moving_to else t.y
+            d = {"tank": t.id, "alive": t.alive, "lives": t.lives}
+            if mine:
+                d["order"] = order_str(t.plan[0]) if t.plan else None
+                d["next"] = [order_str(p) for p in t.plan[1:]]
+            d.update({"x": round(float(px), 2), "y": round(float(py), 2), "facing": t.dir, "stars": t.stars,
+                      "shielded": t.alive and self.t < t.shield_until})
+            return d
+
+        def base(s):
+            ex, ey = EAGLE[s]
+            steel = 0.0
+            if not self.armor_over:
+                steel = self.armor_left
+            steel = max(steel, (self.eagle_invuln_until[s] - self.t) * self.cfg.clock_rate, (self.shovel_until[s] - self.t) * self.cfg.clock_rate)
+            return {"x": ex, "y": ey, "alive": self.base_hp[s] > 0, "hp": self.base_hp[s],
+                    "invulnerable": self.t < self.eagle_invuln_until[s], "steel_walls_s": round(max(0.0, steel))}
+
         st = {
             "status": self.status,
-            "time_left": f"{int(self.time_left // 60)}:{int(self.time_left % 60):02d}",
-            "time_left_s": round(self.time_left, 1),
-            "armor_left": round(self.armor_left, 1),
-            "you": self.side_json(side, True),
-            "enemy": self.side_json(OPP[side], False),
-            "items": [{"type": i.kind, "x": i.x, "y": i.y, "expires_in": round(i.until - self.t, 1)} for i in self.items],
-            "events": evs,
+            "time_left_s": round(self.time_left),
+            "bases_open_in_s": round(self.armor_left),
+            "score_limit": self.cfg.score_target,
+            "map_size": {"width": self.grid.w, "height": self.grid.h},
+            "you": {"side": side, "score": self.score[side], "tanks": [tank(t, True) for t in self.tanks[side]]},
+            "opponent": {"side": opp, "score": self.score[opp], "tanks": [tank(t, False) for t in self.tanks[opp]]},
+            "bases": {"yours": base(side), "opponent": base(opp)},
+            "npcs": [],
+            "bullets": [{"x": round(b.x, 2), "y": round(b.y, 2), "facing": b.dir, "owner": "you" if b.side == side else "opponent"}
+                        for b in self.bullets],
+            "powerups": [{"id": i.id, "type": i.kind, "x": i.x, "y": i.y, "expires_in_s": round(i.until - self.t, 1)} for i in self.items],
         }
         if self.status == "finished":
-            st["winner"] = "you" if self.winner == side else "enemy"
-            st["reason"] = self.reason
+            st["result"] = {"outcome": "you_won" if self.winner == side else "you_lost", "reason": self.reason_code or self.reason,
+                            "your_score": self.score[side], "opponent_score": self.score[opp]}
         if with_map:
-            st["map"] = self.ascii_map(side)
+            st["map"] = self.ascii_map(side).split("\n")
+            st["map_legend"] = MAP_LEGEND
+        st["events"] = evs
         return st, self.seq
 
     def view(self):
@@ -1025,3 +1080,20 @@ class Bot:
 
 def now():
     return time.monotonic()
+
+
+MAP_LEGEND = (". empty   # brick (destructible)   @ steel (only a 3-star tank breaks it)   ~ water (tanks cannot cross, bullets can)"
+              "   % bush (hides tanks)   - ice (slippery)   1 2 your tanks (by number)   O opponent tank   N NPC tank   H your base"
+              "   T opponent base   x destroyed base   P power-up   * bullet")
+
+
+def order_str(st):
+    """Order as the real server prints it: move(up, 3) · move_fire(left, 2) · turn(down) · fire(3, down) · stop."""
+    do = st.get("do")
+    if do in ("move", "move_fire"):
+        return f"{do}({st.get('direction')}, {st.get('_cells_left', st.get('cells', 1))})"
+    if do == "turn":
+        return f"turn({st.get('direction')})"
+    if do == "fire":
+        return f"fire({st.get('count', 1)}, {st.get('direction') or 'facing'})"
+    return str(do)

@@ -65,21 +65,24 @@ Mỗi 20s một **cặp** ở hai vị trí đối xứng, tồn tại 15s, ch�
 Dễ: cả đội giữ nhà (nghĩ 4s) · Vừa: nửa công nửa thủ (2s) · Khó: như Vừa + xe công gặp địch là đánh, xe thủ chặn mọi xe vào
 nửa sân nhà, nhặt đồ gần đường, nhà còn 2 máu thì rút hết về thủ (0,1s). Thắng đều bot Khó là sẵn sàng đấu người.
 
-## Schema của state (điền sau khi đọc Tài liệu API / dò state thật)
-Điền đường dẫn vào `references/state-schema.json` (script đọc file đó), rồi ghi tên trường vào bảng này.
+## Schema của state (đã xác nhận với server thật)
+`GET /matches/{code}/state?map=true` trả về (đã điền sẵn trong `references/state-schema.json`):
 
-| Thông tin | Tên trường |
+| Thông tin | Trường |
 |---|---|
-| Trạng thái trận (`scheduled/live/finished`) | |
-| Thời gian còn lại, giáp còn lại | |
-| Vị trí, hướng, mạng, sao, `order` từng xe ta | |
-| Vị trí, hướng, mạng xe địch | |
-| Vị trí + máu căn cứ ta / địch | |
-| Điểm ta / địch | |
-| Sự kiện (`order_failed`, hạ xe, căn cứ bị bắn + vị trí kẻ bắn...) | |
-| Vật phẩm | |
-| Bản đồ ASCII | |
+| Trạng thái trận | `status` (`finished`, …) · kết quả: `result.outcome` (`you_won`/`you_lost`), `result.reason` (vd `forfeit`) |
+| Thời gian còn lại / giáp còn lại | `time_left_s` / `bases_open_in_s` (giây đồng hồ game) · `score_limit` · `map_size.width/height` |
+| Xe ta | `you.side`, `you.score`, `you.tanks[]`: `tank` (số xe), `x`, `y` (số thực, ô trên-trái), `facing`, `lives`, `stars`, `alive`, `shielded`, `order` (bước đang làm, vd `"fire(3, down)"`, hoặc `null`), `next` (các bước chờ) |
+| Xe địch | `opponent.side`, `opponent.score`, `opponent.tanks[]`: như trên nhưng không có `order`/`next` |
+| Căn cứ | `bases.yours` / `bases.opponent`: `x`, `y`, `alive`, `hp`, `invulnerable` (5 giây sau khi trúng), `steel_walls_s` (tường thép còn bao lâu: giáp, sau khi trúng, xẻng) |
+| Vật phẩm | `powerups[]`: `id`, `type` (`tank`, …), `x`, `y`, `expires_in_s` |
+| Khác | `npcs[]`, `bullets[]` (danh sách đạn đang bay), `note` |
+| Bản đồ | `map` (mảng 42 chuỗi) + `map_legend` |
+| Sự kiện mới | `events[]`: `seq`, `type`, `time_left_s`, … — đã thấy `order_completed` (`tank`, `order`, `reason`, `steps_left`), `powerup_spawned` (`id`, `powerup`, `x`, `y`), `match_finished` (`outcome`, `reason`, `your_score`, `opponent_score`) |
 
+Ký hiệu bản đồ theo `map_legend`: `1 2` xe bạn (theo số) · `O` xe đối thủ · `N` xe NPC · `H` nhà bạn · `T` nhà đối thủ ·
+`x` nhà đã bị phá · `P` vật phẩm · `*` viên đạn.
+Chưa thấy mẫu: sự kiện lệnh thất bại (tên trường lý do / ô bị chặn), cấu trúc phần tử của `bullets[]`, tên trạng thái khi chưa bắt đầu / đang đấu.
 
 ## Toán của trận (cấu hình mặc định)
 - Phá nhà: 5 máu × 1000 điểm; 5 phát trúng hợp lệ là **thắng ngay**. Mỗi phát trúng → xe bắn bị đưa về nhà, đại bàng bất tử 5s.
