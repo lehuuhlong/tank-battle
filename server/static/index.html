@@ -127,6 +127,8 @@
     <button id="btnAgent">Cài đặt agent</button>
     <button id="btnLog">Nhật ký agent</button>
     <button id="btnSettings" class="hidden">Cấu hình</button>
+    <button id="btnRematchTop" class="primary hidden">Đấu lại</button>
+    <button id="btnResultTop" class="hidden">Kết quả</button>
     <button id="btnLeave">Rời phòng</button>
   </div>
   <div class="cfgline" id="rCfg"></div>
@@ -229,7 +231,8 @@ async function loadLobby() {
     if (JSON.stringify(maps) !== JSON.stringify(j.maps)) { maps = j.maps; $("#cMap").innerHTML = maps.map(m => `<option>${m}</option>`).join(""); }
     $("#roomList").innerHTML = j.rooms.map(r => {
       const mine = r.you, full = r.players.top && r.players.bottom;
-      const act = mine ? `<button onclick="location.hash='#/room/${r.code}'">Vào</button>`
+      const again = mine && r.owner === me && r.status === "finished" ? ` <button class="primary" onclick="rematchRoom('${r.code}')">Đấu lại</button>` : "";
+      const act = mine ? `<button onclick="location.hash='#/room/${r.code}'">Vào</button>${again}`
         : !full ? `<button onclick="joinRoom('${r.code}')">Join</button>` : `<button onclick="location.hash='#/room/${r.code}'">Xem</button>`;
       return `<tr><td><b>${r.code}</b></td><td>${esc(r.name)}<div class="muted" style="font-size:12px">${esc(r.map)}</div></td>
         <td><span style="color:var(--gold)">${esc(r.players.bottom || "—")}</span> vs <span style="color:var(--blue)">${esc(r.players.top || "—")}</span></td>
@@ -273,6 +276,8 @@ function renderRoom({ room, game }) {
   $("#btnAgent").classList.toggle("hidden", !you); $("#btnLog").classList.toggle("hidden", !you);
   $("#btnSettings").classList.toggle("hidden", !(you && room.owner === me && st === "scheduled"));
   $("#btnLeave").textContent = you ? "Rời phòng" : "Về sảnh";
+  $("#btnRematchTop").classList.toggle("hidden", !(st === "finished" && room.owner === me));
+  $("#btnResultTop").classList.toggle("hidden", st !== "finished");
   for (const side of ["bottom", "top"]) renderSide(side, room, game);
   draw(game);
   $("#feed").innerHTML = game.events.slice().reverse().map(e => `<div><span class="t">${fmt(room.config.game_seconds - (e.t || 0))}</span>${esc(e.text)}</div>`).join("") ||
@@ -308,7 +313,11 @@ async function showResult(room, game) {
 $("#btnReady").onclick = async () => { const v = lastView; if (!v) return;
   try { await api(`/web/rooms/${roomCode}/ready`, { method: "POST", body: { ready: !v.room.ready[v.room.you] } }); } catch (e) { alert(e.message); } };
 $("#btnLeave").onclick = async () => { if (lastView && lastView.room.you) { try { await api(`/web/rooms/${roomCode}/leave`, { method: "POST" }); } catch (e) { return alert(e.message); } } location.hash = ""; };
-$("#btnRematch").onclick = async () => { try { await api(`/web/rooms/${roomCode}/rematch`, { method: "POST" }); $("#mResult").classList.add("hidden"); } catch (e) { alert(e.message); } };
+async function doRematch(code) { await api(`/web/rooms/${code}/rematch`, { method: "POST" }); }
+$("#btnRematch").onclick = async () => { try { await doRematch(roomCode); $("#mResult").classList.add("hidden"); } catch (e) { alert(e.message); } };
+$("#btnRematchTop").onclick = $("#btnRematch").onclick;
+$("#btnResultTop").onclick = () => { if (lastView) showResult(lastView.room, lastView.game); };
+window.rematchRoom = async (code) => { try { await doRematch(code); location.hash = "#/room/" + code; } catch (e) { alert(e.message); } };
 $("#btnResLobby").onclick = () => { $("#mResult").classList.add("hidden"); location.hash = ""; };
 
 // agent modal
